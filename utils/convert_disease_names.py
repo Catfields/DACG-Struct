@@ -1,0 +1,91 @@
+"""
+统一的疾病名称映射工具
+
+确保全库使用统一的 snake_case 格式疾病名称
+"""
+
+# 统一的疾病名称映射（带空格 → snake_case）
+DISEASE_NAME_MAP = {
+    'blunting of costophrenic angle': 'blunting_of_costophrenic_angle',
+    'lung opacity': 'lung_opacity',
+    'lung lesion': 'lung_lesion',
+    'pleural effusion': 'pleural_effusion',
+    'pleural thickening': 'pleural_thickening',
+    'pleural other': 'pleural_other',
+    'tortuosity of the thoracic aorta': 'tortuosity_of_the_thoracic_aorta',
+    'enlarged cardiomediastinum': 'enlarged_cardiomediastinum',
+    'no finding': 'no_finding',
+    'support devices': 'support_devices',
+}
+
+# 所有疾病列表（snake_case 格式）
+ALL_DISEASES_SNAKE_CASE = [
+    'atelectasis',
+    'blunting_of_costophrenic_angle',
+    'calcification',
+    'cardiomegaly',
+    'consolidation',
+    'edema',
+    'emphysema',
+    'enlarged_cardiomediastinum',
+    'fracture',
+    'granuloma',
+    'hernia',
+    'lung_lesion',
+    'lung_opacity',
+    'no_finding',
+    'pleural_effusion',
+    'pleural_other',
+    'pleural_thickening',
+    'pneumonia',
+    'pneumothorax',
+    'scoliosis',
+    'support_devices',
+    'tortuosity_of_the_thoracic_aorta',
+]
+
+
+def normalize_disease_name(disease_name: str) -> str:
+    """
+    标准化疾病名称为 snake_case 格式
+
+    Args:
+        disease_name: 原始疾病名称
+
+    Returns:
+        snake_case 格式的疾病名称
+    """
+    if not disease_name:
+        return disease_name
+
+    disease_lower = disease_name.strip().lower()
+
+    # 查找映射
+    for original, schema_name in DISEASE_NAME_MAP.items():
+        if disease_lower == original.lower():
+            return schema_name
+
+    # 如果没有空格，直接返回
+    if ' ' not in disease_name:
+        return disease_name.strip()
+
+    # 如果有空格但不在映射表中，转换为 snake_case
+    return disease_name.strip().replace(' ', '_')
+
+
+if __name__ == "__main__":
+    # 测试
+    test_cases = [
+        "pleural effusion",
+        "no finding",
+        "support devices",
+        "atelectasis",
+        "lung opacity",
+        "blunting of costophrenic angle",
+    ]
+
+    print("疾病名称标准化测试:")
+    print("-" * 60)
+    for original in test_cases:
+        normalized = normalize_disease_name(original)
+        print(f"{original:40s} → {normalized}")

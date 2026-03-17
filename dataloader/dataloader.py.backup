@@ -1,0 +1,810 @@
+"""
+MIMIC-CXR-A数据集加载器
+支持图像、结构化文本和掩膜数据的完整加载
+"""
+
+import torch
+import torch.utils.data as data
+import pandas as pd
+import json
+import os
+import ast
+from PIL import Image
+from typing import Dict, List, Optional, Tuple, Any, Union
+import numpy as np
+import glob
+import warnings
+from collections import defaultdict
+
+
+class MIMICCXRADataset(data.Dataset):
+    """
+    MIMIC-CXR-A数据集加载器
+    
+    支持加载：
+    - 胸部X光图像
+    - 结构化疾病标注（包含概率、严重程度、位置信息）
+    - 分割掩膜（可选）
+    - 分层分割索引
+    """
+    
+    def __init__(
+        self,
+        csv_path: str,
+        split: str,
+        image_dir: str,
+        split_dir: Optional[str] = None,
+        mask_dir: Optional[str] = None,
+        transform=None,
+        disease_list: Optional[List[str]] = None,
+        load_masks: bool = True
+    ):
+        """
+        初始化MIMIC-CXR-A数据集
+        
+        Args:
+            csv_path: 结构化报告CSV文件路径
+            split: 数据分割 ('train', 'val', 'test')
+            image_dir: 图像文件根目录
+            split_dir: 分层分割索引目录
+            mask_dir: 掩膜图像目录
+            transform: 图像变换
+            disease_list: 预定义的疾病词汇表
+            load_masks: 是否加载掩膜图像
+        """
+        self.csv_path = csv_path
+        self.split = split
+        self.image_dir = image_dir
+        self.split_dir = split_dir
+        self.mask_dir = mask_dir
+        self.transform = transform
+        self.load_masks = load_masks and mask_dir is not None
+        self.mask_index: Dict[str, List[str]] = {}
+        
+        # 位置映射（需要在加载数据之前定义）
+        self.location_map = {
+            'None': 0, 'none': 0, '': 0,
+            'left lung': 1, 'left_lung': 1, 'left': 1,
+            'right lung': 2, 'right_lung': 2, 'right': 2,
+            'heart': 3, 'cardiac': 3,
+            'both lungs': 4, 'bilateral': 4,
+            'basilar': 5, 'base': 5,
+            'upper lobe': 6, 'lower lobe': 7,
+            'mediastinum': 8
+        }
+        
+        # 加载CSV数据
+        self.data = self._load_csv_data()
+        
+        # 加载分割索引
+        if split_dir is not None:
+            self.split_indices = self._load_split_indices(split_dir, split)
+            self.data = [self.data[i] for i in self.split_indices]
+        else:
+            self.split_indices = None
+
+        # 构建掩膜索引并过滤掉缺失图像/掩膜的样本
+        if self.load_masks:
+            self.mask_index = self._build_mask_index()
+        else:
+            self.mask_index = {}
+        
+        self._filter_invalid_samples()
+        
+        # 构建/设置疾病词汇表
+        if disease_list is not None:
+            self.disease_list = disease_list
+        else:
+            self.disease_list = self._build_disease_vocab()
+        
+        # 创建疾病到ID的映射
+        self.disease_to_id = {disease: i for i, disease in enumerate(self.disease_list)}
+        
+        print(f"MIMIC-CXR-A数据集 {split}: {len(self.data)} 个样本")
+        print(f"疾病词汇表大小: {len(self.disease_list)}")
+        print(f"掩膜加载: {'启用' if self.load_masks else '禁用'}")
+    
+    def _load_csv_data(self) -> List[Dict]:
+        """加载并解析CSV数据"""
+        print(f"正在加载CSV数据: {self.csv_path}")
+        
+        # 读取CSV文件
+        df = pd.read_csv(self.csv_path)
+        print(f"成功加载 {len(df)} 条记录")
+        
+        # 解析JSON字段
+        def parse_positive_diseases(x):
+            try:
+                if pd.isna(x) or x == '[]':
+                    return []
+                diseases = ast.literal_eval(x)
+                return diseases if isinstance(diseases, list) else []
+            except:
+                return []
+        
+        def parse_negative_diseases(x):
+            try:
+                if pd.isna(x) or x == '[]':
+                    return []
+                diseases = ast.literal_eval(x)
+                return diseases if isinstance(diseases, list) else []
+            except:
+                return []
+        
+        df['parsed_positive'] = df['positive_diseases_detail'].apply(parse_positive_diseases)
+        df['parsed_negative'] = df['negative_diseases'].apply(parse_negative_diseases)
+        
+        # 转换为字典列表并添加元数据
+        data_list = []
+        for idx, row in df.iterrows():
+            sample = {
+                'positive_findings': self._process_disease_details(row['parsed_positive']),
+                'negative_findings': row['parsed_negative'],
+                'metadata': {
+                    'id': row['image_id'],
+                    'subject_id': row['subject_id'],
+                    'image_path': [os.path.join(self.image_dir, row['image_path'])],
+                    'report_type': 'structured_csv',
+                    'dataset_type': self.split,
+                    'original_findings': str(row.get('findings', '')),
+                    'original_impressions': str(row.get('impressions', '')),
+                    'view_type': row.get('view_type', ''),
+                    'full_report': row.get('full_report', ''),
+                    'processed_time': pd.Timestamp.now().isoformat(),
+                    'worker_id': 'mimic_cxr_a_dataloader'
+                }
+            }
+            data_list.append(sample)
+        
+        print("CSV数据解析完成")
+        return data_list
+    
+    def _process_disease_details(self, diseases_list: List[Dict]) -> List[Dict]:
+        """处理疾病详细信息"""
+        processed = []
+        for disease in diseases_list:
+            if isinstance(disease, dict) and 'disease' in disease:
+                detail = {
+                    'disease_name': disease['disease'],
+                    'probability': self._normalize_probability(disease.get('probability', 2)),
+                    'severity': self._normalize_severity(disease.get('severity', None)),
+                    'location': self._normalize_location(disease.get('location', None))
+                }
+                processed.append(detail)
+        return processed
+    
+    def _normalize_probability(self, prob: Union[int, float, None]) -> float:
+        """标准化概率等级 (1-4 -> 0.25-1.0)"""
+        if prob is None:
+            return 0.5
+        prob_map = {1: 0.25, 2: 0.5, 3: 0.75, 4: 1.0}
+        return prob_map.get(int(prob), 0.5)
+    
+    def _normalize_severity(self, severity: Union[str, None]) -> int:
+        """标准化严重程度"""
+        if severity is None:
+            return 0
+        severity_map = {
+            'None': 0, 'none': 0, '': 0,
+            'Mild': 1, 'mild': 1,
+            'Moderate': 2, 'moderate': 2,
+            'Severe': 3, 'severe': 3
+        }
+        return severity_map.get(str(severity), 0)
+    
+    def _normalize_location(self, location: Union[str, None]) -> int:
+        """标准化解剖位置"""
+        if location is None:
+            return 0
+        return self.location_map.get(str(location), 0)
+    
+    def _load_split_indices(self, split_dir: str, split: str) -> List[int]:
+        """加载分层分割索引"""
+        split_file = os.path.join(split_dir, f'{split}_indices.json')
+        if not os.path.exists(split_file):
+            raise FileNotFoundError(f"分割索引文件不存在: {split_file}")
+        
+        with open(split_file, 'r') as f:
+            indices = json.load(f)
+        
+        print(f"加载分割索引: {split} -> {len(indices)} 个样本")
+        return indices
+    
+    def _build_disease_vocab(self) -> List[str]:
+        """构建疾病词汇表"""
+        disease_set = set()
+        
+        for sample in self.data:
+            # 添加positive_findings中的疾病
+            for finding in sample.get('positive_findings', []):
+                disease_set.add(finding['disease_name'])
+            
+            # 添加negative_findings中的疾病
+            for disease in sample.get('negative_findings', []):
+                disease_set.add(disease)
+        
+        # 排序以确保一致性
+        disease_list = sorted(list(disease_set))
+        print(f"构建疾病词汇表: {len(disease_list)} 个疾病")
+        return disease_list
+    
+    def __len__(self) -> int:
+        return len(self.data)
+    
+    def __getitem__(self, index: int) -> Tuple[torch.Tensor, Dict, str, Optional[torch.Tensor]]:
+        """
+        获取单个样本
+        
+        Returns:
+            image: 处理后的图像张量
+            targets: 结构化目标标签
+            image_id: 图像ID
+            mask_image: 掩膜图像（如果有）
+        """
+        sample = self.data[index]
+        
+        # 加载图像
+        image = self._load_image(sample)
+        
+        # 加载掩膜（如果启用）
+        mask_image = None
+        if self.load_masks:
+            mask_image = self._load_mask_image(sample)
+        
+        # 处理结构化标签
+        targets = self._process_sample(sample)
+        
+        # 添加元数据
+        targets['metadata'] = sample['metadata']
+        
+        return image, targets, sample['metadata']['id'], mask_image
+    
+    def _load_image(self, sample: Dict) -> torch.Tensor:
+        """加载并预处理图像"""
+        image_paths = sample['metadata']['image_path']
+        image_path = image_paths[0]
+        
+        if not os.path.exists(image_path):
+            # 尝试查找替代图像或创建占位符
+            warnings.warn(f"图像文件不存在: {image_path}")
+            # 创建一个黑色占位符图像，先应用变换确保尺寸一致
+            dummy_image = Image.new('RGB', (256, 256), (0, 0, 0))
+            if self.transform:
+                return self.transform(dummy_image)
+            else:
+                from torchvision import transforms
+                transform = transforms.Compose([
+                    transforms.Resize((256, 256)),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                ])
+                return transform(dummy_image)
+        
+        # 加载图像
+        try:
+            image = Image.open(image_path).convert('RGB')
+        except Exception as e:
+            warnings.warn(f"无法加载图像 {image_path}: {e}")
+            # 创建一个黑色占位符图像
+            dummy_image = Image.new('RGB', (256, 256), (0, 0, 0))
+            if self.transform:
+                return self.transform(dummy_image)
+            else:
+                from torchvision import transforms
+                transform = transforms.Compose([
+                    transforms.Resize((256, 256)),
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                ])
+                return transform(dummy_image)
+        
+        # 应用变换
+        if self.transform:
+            image = self.transform(image)
+        else:
+            # 默认变换
+            from torchvision import transforms
+            transform = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
+            image = transform(image)
+        
+        return image
+    
+    def _load_mask_image(self, sample: Dict) -> Optional[torch.Tensor]:
+        """加载掩膜图像"""
+        image_id = sample['metadata']['id']
+        mask_path = sample['metadata'].get('mask_path')
+        if mask_path is None:
+            mask_path = self._select_mask_path(image_id)
+        
+        if mask_path is None:
+            warnings.warn(f"未找到掩膜文件，image_id={image_id}，请检查掩膜目录 {self.mask_dir}")
+            return None
+        
+        if not os.path.exists(mask_path):
+            warnings.warn(f"掩膜路径不存在: {mask_path}")
+            return None
+        
+        try:
+            mask = Image.open(mask_path).convert('L')  # 转换为灰度
+            
+            # 获取图像变换后的目标尺寸
+            target_size = self._get_image_target_size()
+            
+            # 调整大小以匹配图像
+            from torchvision import transforms
+            mask_transform = transforms.Compose([
+                transforms.Resize(target_size),
+                transforms.ToTensor()
+            ])
+            mask = mask_transform(mask)
+            
+            return mask
+            
+        except Exception as e:
+            warnings.warn(f"无法加载掩膜 {mask_path}: {e}")
+            return None
+
+    def _build_mask_index(self) -> Dict[str, List[str]]:
+        """预先构建 image_id -> 掩膜文件列表 的索引，减少运行时搜索开销"""
+        if not os.path.isdir(self.mask_dir):
+            raise FileNotFoundError(f"掩膜目录不存在: {self.mask_dir}")
+        
+        mask_index: Dict[str, List[str]] = defaultdict(list)
+        # 支持递归目录，适配扁平化或分层存放方式
+        pattern = os.path.join(self.mask_dir, "**", "*.png")
+        for mask_path in glob.glob(pattern, recursive=True):
+            filename = os.path.splitext(os.path.basename(mask_path))[0]
+            # 文件名形如: subjectid_xxx_impression_multiclass_imageid
+            image_id = filename.split('_')[-1]
+            mask_index[image_id].append(mask_path)
+        
+        if not mask_index:
+            raise RuntimeError(f"在掩膜目录 {self.mask_dir} 下未找到任何PNG掩膜文件，请确认路径是否正确")
+        
+        return dict(mask_index)
+
+    def _select_mask_path(self, image_id: str) -> Optional[str]:
+        """从索引中选择最合适的掩膜文件"""
+        if not self.mask_index:
+            return None
+        
+        candidates = self.mask_index.get(image_id, [])
+        if not candidates:
+            return None
+        
+        # 优先选择多类别掩膜，其次选择impression，再选择findings
+        preferred_order = [
+            "impression_multiclass",
+            "findings_multiclass",
+            "impression",
+            "findings"
+        ]
+        
+        for keyword in preferred_order:
+            for path in candidates:
+                if keyword in os.path.basename(path):
+                    return path
+        
+        return candidates[0]  # 兜底返回第一条
+
+    def _filter_invalid_samples(self):
+        """过滤掉缺失图像或掩膜的样本（掩膜是训练必须项）"""
+        filtered_data = []
+        missing_images = []
+        missing_masks = []
+
+        if self.load_masks and not self.mask_index:
+            raise RuntimeError(f"掩膜索引为空，请检查掩膜目录 {self.mask_dir}")
+        
+        for sample in self.data:
+            image_path = sample['metadata']['image_path'][0]
+            if not os.path.exists(image_path):
+                missing_images.append(image_path)
+                continue
+            
+            if self.load_masks:
+                mask_path = self._select_mask_path(sample['metadata']['id'])
+                if mask_path is None:
+                    missing_masks.append(sample['metadata']['id'])
+                    continue
+                sample['metadata']['mask_path'] = mask_path
+            
+            filtered_data.append(sample)
+        
+        if not filtered_data:
+            raise RuntimeError("过滤后没有可用样本，请检查图像/掩膜路径是否正确或是否与CSV匹配")
+        
+        if missing_images:
+            warnings.warn(
+                f"{len(missing_images)} 个样本因图像缺失被跳过，示例: {missing_images[:3]}"
+            )
+        if self.load_masks and missing_masks:
+            warnings.warn(
+                f"{len(missing_masks)} 个样本因掩膜缺失被跳过，示例image_id: {missing_masks[:3]}"
+            )
+        
+        self.data = filtered_data
+    
+    def _get_image_target_size(self) -> Tuple[int, int]:
+        """获取图像变换后的目标尺寸"""
+        if self.transform is None:
+            return (256, 256)  # 默认尺寸
+        
+        # 尝试从变换中推断目标尺寸
+        # 这是一个简化的实现，实际可能需要更复杂的逻辑
+        if hasattr(self.transform, 'transforms'):
+            for t in self.transform.transforms:
+                if hasattr(t, 'size'):
+                    if isinstance(t.size, (tuple, list)):
+                        return tuple(t.size[-2:])  # (height, width)
+                    else:
+                        return (t.size, t.size)
+        
+        # 默认尺寸
+        return (224, 224)  # 常见的crop尺寸
+    
+    def _process_sample(self, sample: Dict) -> Dict:
+        """处理单个样本为模型输入格式"""
+        # 解析positive_findings
+        positive_findings = sample.get('positive_findings', [])
+        negative_findings = sample.get('negative_findings', [])
+        
+        # 创建疾病标签
+        disease_labels = [0] * len(self.disease_list)
+        
+        # 标记阳性疾病
+        for finding in positive_findings:
+            disease_name = finding['disease_name']
+            if disease_name in self.disease_to_id:
+                disease_labels[self.disease_to_id[disease_name]] = 1
+        
+        # 提取详细信息
+        disease_details = []
+        probability_scores = []
+        severity_scores = []
+        location_ids = []
+        
+        for finding in positive_findings:
+            disease_details.append({
+                'disease_name': finding['disease_name'],
+                'disease_id': self.disease_to_id.get(finding['disease_name'], -1),
+                'probability': finding['probability'],
+                'severity': finding['severity'],
+                'location': finding['location']
+            })
+            probability_scores.append(finding['probability'])
+            severity_scores.append(finding['severity'])
+            location_ids.append(finding['location'])
+        
+        return {
+            'disease_labels': disease_labels,
+            'disease_details': disease_details,
+            'probability_scores': probability_scores,
+            'severity_scores': severity_scores,
+            'location_ids': location_ids,
+            'negative_diseases': negative_findings,
+            'num_findings': len(positive_findings)
+        }
+    
+    def get_disease_list(self) -> List[str]:
+        """获取疾病词汇表"""
+        return self.disease_list.copy()
+
+    def get_sample_count(self) -> int:
+        """获取样本数量"""
+        return len(self.data)
+    
+    def get_split_info(self) -> Dict[str, Any]:
+        """获取分割信息"""
+        return {
+            'split': self.split,
+            'sample_count': len(self.data),
+            'disease_count': len(self.disease_list),
+            'csv_path': self.csv_path,
+            'has_split_indices': self.split_indices is not None,
+            'load_masks': self.load_masks
+        }
+
+
+class MIMICCXRACollator:
+    """
+    MIMIC-CXR-A数据集的批处理函数
+    处理变长疾病详情列表的批处理
+    """
+    
+    def __init__(self, pad_value: int = -1):
+        """
+        初始化Collator
+        
+        Args:
+            pad_value: 填充值，用于变长序列
+        """
+        self.pad_value = pad_value
+    
+    def __call__(self, batch: List[Tuple]) -> Dict[str, Any]:
+        """
+        处理批次数据
+        
+        Args:
+            batch: 批次数据，每个元素为(image, targets, image_id, mask_image)
+            
+        Returns:
+            处理后的批次数据
+        """
+        # 分离不同类型的组件
+        images = []
+        targets_list = []
+        image_ids = []
+        mask_images = []
+        
+        for sample in batch:
+            images.append(sample[0])
+            targets_list.append(sample[1])
+            image_ids.append(sample[2])
+            if sample[3] is not None:
+                mask_images.append(sample[3])
+        
+        # 堆叠图像张量
+        batch_images = torch.stack(images, dim=0)
+        
+        # 处理掩膜图像
+        batch_mask_images = None
+        if mask_images:
+            batch_mask_images = torch.stack(mask_images, dim=0)
+        
+        # 批处理targets
+        batch_targets = self._collate_targets(targets_list)
+        
+        return {
+            'images': batch_images,
+            'targets': batch_targets,
+            'image_ids': image_ids,
+            'mask_images': batch_mask_images
+        }
+    
+    def _collate_targets(self, targets_list: List[Dict]) -> Dict[str, Any]:
+        """批处理targets，处理变长序列"""
+        if not targets_list:
+            return {}
+        
+        batch_size = len(targets_list)
+        
+        # 获取疾病数量
+        num_diseases = len(targets_list[0]['disease_labels'])
+        
+        # 处理固定长度的标签
+        disease_labels_tensor = torch.zeros(batch_size, num_diseases, dtype=torch.long)
+        
+        # 处理变长的详细信息
+        max_findings = max(len(targets['disease_details']) for targets in targets_list)
+        
+        probability_tensor = torch.zeros(batch_size, max_findings, dtype=torch.float)
+        severity_tensor = torch.zeros(batch_size, max_findings, dtype=torch.long)
+        location_tensor = torch.zeros(batch_size, max_findings, dtype=torch.long)
+        
+        disease_details_batch = []
+        negative_diseases_batch = []
+        num_findings_batch = []
+        
+        for i, targets in enumerate(targets_list):
+            # 固定长度标签
+            disease_labels_tensor[i] = torch.tensor(targets['disease_labels'], dtype=torch.long)
+            
+            # 变长详细信息
+            details = targets['disease_details']
+            disease_details_batch.append(details)
+            negative_diseases_batch.append(targets['negative_diseases'])
+            num_findings_batch.append(targets['num_findings'])
+            
+            for j, detail in enumerate(details):
+                if j < max_findings:
+                    probability_tensor[i, j] = detail['probability']
+                    severity_tensor[i, j] = detail['severity']
+                    location_tensor[i, j] = detail['location']
+            
+            # 填充剩余位置
+            for j in range(len(details), max_findings):
+                probability_tensor[i, j] = 0.0
+                severity_tensor[i, j] = 0
+                location_tensor[i, j] = 0
+        
+        return {
+            'disease_labels': disease_labels_tensor,
+            'disease_details': disease_details_batch,
+            'probability_scores': probability_tensor,
+            'severity_scores': severity_tensor,
+            'location_ids': location_tensor,
+            'negative_diseases': negative_diseases_batch,
+            'num_findings': torch.tensor(num_findings_batch, dtype=torch.long)
+        }
+
+
+def create_mimic_cxr_data_loaders(
+    args,
+    split_dir: str,
+    disease_list: Optional[List[str]] = None,
+    transform_train=None,
+    transform_val=None,
+    load_masks: bool = True
+):
+    """
+    创建MIMIC-CXR-A数据加载器
+    
+    Args:
+        args: 参数对象，包含csv_path, image_dir, mask_dir, batch_size等
+        split_dir: 分割索引目录
+        disease_list: 预定义疾病词汇表
+        transform_train: 训练时的图像变换
+        transform_val: 验证/测试时的图像变换
+        load_masks: 是否加载掩膜
+        
+    Returns:
+        train_loader, val_loader, test_loader
+    """
+    # 默认变换
+    if transform_train is None:
+        from torchvision import transforms
+        transform_train = transforms.Compose([
+            transforms.Resize(256),
+            transforms.RandomCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
+    
+    if transform_val is None:
+        from torchvision import transforms
+        transform_val = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        ])
+    
+    # 创建数据集
+    train_dataset = MIMICCXRADataset(
+        csv_path=args.csv_path,
+        split='train',
+        image_dir=args.image_dir,
+        split_dir=split_dir,
+        mask_dir=getattr(args, 'mask_dir', None),
+        transform=transform_train,
+        disease_list=disease_list,
+        load_masks=load_masks
+    )
+    
+    val_dataset = MIMICCXRADataset(
+        csv_path=args.csv_path,
+        split='val',
+        image_dir=args.image_dir,
+        split_dir=split_dir,
+        mask_dir=getattr(args, 'mask_dir', None),
+        transform=transform_val,
+        disease_list=train_dataset.disease_list,
+        load_masks=load_masks
+    )
+    
+    test_dataset = MIMICCXRADataset(
+        csv_path=args.csv_path,
+        split='test',
+        image_dir=args.image_dir,
+        split_dir=split_dir,
+        mask_dir=getattr(args, 'mask_dir', None),
+        transform=transform_val,
+        disease_list=train_dataset.disease_list,
+        load_masks=load_masks
+    )
+    
+    # 创建collator
+    collator = MIMICCXRACollator()
+    
+    # 创建数据加载器
+    train_loader = data.DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=getattr(args, 'num_workers', 0),
+        collate_fn=collator,
+        pin_memory=True
+    )
+    
+    val_loader = data.DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=getattr(args, 'num_workers', 0),
+        collate_fn=collator,
+        pin_memory=True
+    )
+    
+    test_loader = data.DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=getattr(args, 'num_workers', 0),
+        collate_fn=collator,
+        pin_memory=True
+    )
+    
+    return train_loader, val_loader, test_loader
+
+
+def test_mimic_cxr_dataloader():
+    """测试MIMIC-CXR-A数据加载器"""
+    # 模拟参数
+    class MockArgs:
+        def __init__(self):
+            self.csv_path = '/home/y530/handsome/DACG/data/mimic-cxr-a/structured_reports.csv'
+            self.image_dir = '/home/y530/handsome/DACG/data/mimic-cxr-a/images'
+            self.mask_dir = '/home/y530/handsome/DACG/data/mimic-cxr-a/all_cleaned_segmentation_masks'
+            self.batch_size = 4
+            self.num_workers = 0
+    
+    args = MockArgs()
+    split_dir = '/home/y530/handsome/DACG/data/mimic-cxr-a/stratified_split'
+    
+    print("=== 测试MIMIC-CXR-A数据集 ===")
+    
+    try:
+        # 创建数据集
+        train_dataset = MIMICCXRADataset(
+            csv_path=args.csv_path,
+            split='train',
+            image_dir=args.image_dir,
+            split_dir=split_dir,
+            mask_dir=args.mask_dir,
+            load_masks=True
+        )
+        
+        print(f"数据集创建成功: {len(train_dataset)} 个样本")
+        print(f"疾病词汇表: {train_dataset.disease_list[:5]}...")  # 显示前5个
+        
+        # 测试数据加载
+        sample = train_dataset[0]
+        image, targets, image_id, mask_image = sample
+        
+        print(f"样本测试成功:")
+        print(f"  图像形状: {image.shape}")
+        print(f"  图像ID: {image_id}")
+        print(f"  目标键: {list(targets.keys())}")
+        print(f"  疾病标签形状: {len(targets['disease_labels'])}")
+        print(f"  疾病详情数量: {len(targets['disease_details'])}")
+        print(f"  掩膜: {'有' if mask_image is not None else '无'}")
+        if mask_image is not None:
+            print(f"  掩膜形状: {mask_image.shape}")
+        
+        # 测试数据加载器
+        train_loader, val_loader, test_loader = create_mimic_cxr_data_loaders(
+            args, split_dir, load_masks=True
+        )
+        
+        print(f"\n数据加载器测试:")
+        print(f"  训练批次数: {len(train_loader)}")
+        print(f"  验证批次数: {len(val_loader)}")
+        print(f"  测试批次数: {len(test_loader)}")
+        
+        # 测试批次加载
+        batch = next(iter(train_loader))
+        print(f"\n批次测试:")
+        print(f"  批次数图像形状: {batch['images'].shape}")
+        print(f"  批次目标键: {list(batch['targets'].keys())}")
+        print(f"  批次疾病标签形状: {batch['targets']['disease_labels'].shape}")
+        print(f"  批次概率分数形状: {batch['targets']['probability_scores'].shape}")
+        print(f"  批次掩膜: {'有' if batch['mask_images'] is not None else '无'}")
+        
+        print("\n✅ MIMIC-CXR-A数据集测试通过!")
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ MIMIC-CXR-A数据集测试失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+if __name__ == '__main__':
+    test_mimic_cxr_dataloader()

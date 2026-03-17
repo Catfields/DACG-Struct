@@ -1,0 +1,166 @@
+# ============================================================================
+# DACG模型训练配置文件（修正版）
+# ============================================================================
+
+# 数据配置
+data:
+  name: "mimic-cxr-a"
+  # 数据文件路径（支持JSONL或CSV格式）
+  data_path: "/home/y530/handsome/DACG/data/mimic-cxr-a/all_structured_reports.jsonl"
+  # 数据格式：auto（自动检测）、csv、jsonl
+  data_format: "auto"
+  # 图像目录
+  image_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/images"
+  # 掩膜目录
+  mask_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/masks"
+  # 分割目录（包含train_image_ids.txt, val_image_ids.txt等）
+  split_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a"
+  
+  # 掩膜配置
+  mask:
+    enabled: true
+    # 注意：image_id只是标识符，需要从image_path中提取文件名来匹配掩膜
+    file_patterns:
+      # 基于文件名匹配，而不是image_id
+      - "*_mask_leftlung*.png"
+      - "*_mask_rightlung*.png"
+      - "*_msak_heart*.png"
+    
+    # 器官映射（对应多类别掩膜的类别）
+    organ_mapping:
+      left_lung: 0      
+      right_lung: 1   
+      heart: 2          
+      background: 3     
+      # 注意：这些类别编号需要根据实际多类别掩膜文件验证
+
+# 模型配置
+model:
+  visual_extractor: "resnet101"
+  visual_feat_dim: 2048
+  visual_extractor_pretrained: true
+  
+  d_model: 512
+  num_regions: 4
+  num_diseases: 16  # 将从数据中自动获取
+  
+  # V_fused_Encoder
+  vfused_encoder:
+    layers: 6
+    heads: 8
+    d_ff: 2048
+    dropout: 0.1
+  
+  dropout: 0.1
+  device: "auto"
+
+# 训练配置
+training:
+  # 基础参数
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  warmup_epochs: 5
+  max_grad_norm: 1.0
+  
+  # 优化器配置
+  optimizer: "adamw"
+  scheduler: "cosine_annealing_warm_restarts"
+  
+  # 数据加载
+  num_workers: 4
+  pin_memory: true
+  drop_last: true
+  
+  # 数据增强
+  augmentation:
+    enabled: true
+    resize: 256
+    crop_size: 224
+    random_horizontal_flip: 0.5
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# 损失函数配置
+loss:
+  # 损失权重
+  weights:
+    mention_loss: 1.0
+    polarity_loss: 1.0
+    probability_loss: 1.0
+    severity_loss: 1.0
+    location_loss: 1.0
+  
+  # Focal Loss参数
+  focal:
+    alpha: 0.75
+    gamma: 2.0
+    eps: 1e-6
+  
+  # 数值稳定性
+  clip_grad_norm: 1.0
+  use_amp: false
+
+# S-Score评估配置
+s_score:
+  enabled: true
+  interval: 1  # 每个epoch评估
+  threshold: 0.15  # 疾病存在性判断阈值
+  save_best: true  # 根据S-Score保存最佳模型
+  
+  # 权重配置
+  weights:
+    p_weight: 0.5  # P-Score权重
+    d_weight: 0.5  # D-Score权重
+  
+  # 评估策略
+  strategy: "balanced"  # balanced, clinical, research
+
+# 实验管理
+experiment:
+  name: "dacg_mimic_experiment"
+  description: "DACG model training on MIMIC-CXR-A dataset with multiclass masks"
+  mode: "normal"  # normal, quick, debug
+  seed: 42  # 随机种子
+  resume: null  # 恢复训练的检查点路径，null表示不恢复
+  
+  # 保存配置
+  save:
+    dir: "./checkpoints"
+    interval: 5  # 每5个epoch保存
+    best_metric: "s_score"  # loss, s_score, both
+    keep_latest: true
+    keep_best: true
+  
+  # 日志配置
+  logging:
+    dir: "./logs"
+    level: "INFO"
+    save_history: true
+    tensorboard: false
+  
+  # 早停配置
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 1e-4
+    monitor: "s_score"  # loss, s_score
+
+# 环境配置
+environment:
+  # 设备配置
+  device: "cuda"  # auto, cuda:0, cuda:1, cpu
+  mixed_precision: true
+  deterministic: false
+  
+  # 内存优化
+  memory:
+    gradient_checkpointing: false
+    find_unused_parameters: false
+  
+  # 多GPU配置
+  multi_gpu:
+    enabled: false
+    strategy: "ddp"  # ddp, data_parallel

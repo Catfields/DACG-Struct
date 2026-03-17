@@ -1,0 +1,143 @@
+# ============================================================================
+# DACG模型调试配置文件
+# ============================================================================
+
+# 数据配置（调试版本）
+data:
+  name: "mimic-cxr-a"
+  data_path: "/home/y530/handsome/DACG/data/mimic-cxr-a/all_structured_reports.jsonl"
+  data_format: "auto"
+  image_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/images"
+  mask_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/masks"
+  split_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a"
+  
+  mask:
+    enabled: true
+    file_patterns:
+      - "*_findings_multiclass_*.png"
+      - "*_heart_multiclass_*.png"
+      - "*_left_lung_multiclass_*.png"
+      - "*_right_lung_multiclass_*.png"
+      - "*_background_multiclass_*.png"
+    
+    organ_mapping:
+      background: 0
+      left_lung: 1
+      right_lung: 2
+      heart: 3
+
+# 模型配置（调试版本）
+model:
+  visual_extractor: "resnet18"  # 最小的模型
+  visual_feat_dim: 512
+  visual_extractor_pretrained: true
+  
+  d_model: 128  # 最小的模型维度
+  num_regions: 2  # 减少区域数量
+  num_diseases: auto
+  
+  vfused_encoder:
+    layers: 1
+    heads: 2  # 最少的注意力头
+    d_ff: 256  # 最小的FFN维度
+    dropout: 0.1
+  
+  dropout: 0.1
+  device: "auto"
+
+# 训练配置（调试版本）
+training:
+  batch_size: 2  # 最小批次
+  num_epochs: 3  # 最少epoch
+  learning_rate: 1e-3
+  weight_decay: 1e-4
+  warmup_epochs: 0  # 无预热
+  max_grad_norm: 1.0
+  
+  optimizer: "adamw"
+  scheduler: "constant"  # 固定学习率
+  
+  num_workers: 1  # 单线程
+  pin_memory: false
+  drop_last: false
+  
+  # 调试时的日志间隔
+  eval_interval: 1  # 每个epoch都评估
+  log_interval: 10  # 更频繁的日志输出
+  
+  augmentation:
+    enabled: false  # 调试时禁用数据增强
+    resize: 64  # 极小的图像尺寸
+    crop_size: 56
+    random_horizontal_flip: 0.0
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+# 损失函数配置
+loss:
+  weights:
+    mention_loss: 1.0
+    polarity_loss: 1.0
+    probability_loss: 1.0
+    severity_loss: 1.0
+    location_loss: 1.0
+  
+  focal:
+    alpha: 0.75
+    gamma: 2.0
+    eps: 1e-6
+  
+  clip_grad_norm: 1.0
+  use_amp: false
+
+# S-Score评估配置
+s_score:
+  enabled: true
+  interval: 1  # 每个epoch评估
+  threshold: 0.3
+  save_best: false  # 调试时不保存最佳模型
+  
+  weights:
+    p_weight: 0.5
+    d_weight: 0.5
+  
+  strategy: "balanced"
+
+# 实验管理
+experiment:
+  name: "dacg_debug_session"
+  description: "DACG model debug configuration"
+  mode: "debug"
+  seed: 42
+  resume: null
+  
+  save:
+    dir: "./debug_checkpoints"
+    interval: 1  # 每个epoch都保存
+    best_metric: "loss"  # 调试时关注损失
+    keep_latest: true
+    keep_best: false  # 不保存最佳模型
+  
+  logging:
+    dir: "./debug_logs"
+    level: "DEBUG"  # 详细日志
+    save_history: true
+    tensorboard: false
+  
+  early_stopping:
+    enabled: false  # 调试时禁用早停
+
+# 环境配置
+environment:
+  device: "cuda"
+  mixed_precision: false  # 调试时禁用混合精度
+  deterministic: true  # 确定性计算便于调试
+  
+  memory:
+    gradient_checkpointing: false
+    find_unused_parameters: true  # 帮助发现未使用的参数
+  
+  multi_gpu:
+    enabled: false
+    strategy: "ddp"
