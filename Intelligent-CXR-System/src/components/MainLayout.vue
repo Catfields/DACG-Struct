@@ -3,7 +3,7 @@
     <!-- 顶部导航栏 -->
     <header class="top-bar">
       <div class="logo-area">
-        <span class="logo-text">胸部X光片结构化诊断系统</span>
+        <span class="logo-text">胸片影像智能分割与报告生成系统</span>
       </div>
       <div class="user-area">
         <span class="user-role">
@@ -109,8 +109,14 @@
         </div>
 
         <!-- 预览区域 -->
-        <div class="image-wrapper" v-if="previewUrl">
-          <img :src="previewUrl" alt="胸片预览" />
+        <div class="image-wrapper" v-if="previewUrl || overlayVisible">
+          <img
+            v-if="overlayVisible && overlayUrl"
+            :src="overlayUrl"
+            alt="器官遮罩预览"
+            @error="onOverlayError"
+          />
+          <img v-else :src="previewUrl" alt="胸片预览" />
         </div>
         <div class="image-placeholder" v-else>
           <span>尚未上传胸片</span>
@@ -126,16 +132,40 @@
             <span v-if="!loading">生成结构化诊断报告</span>
             <span v-else>分析中...</span>
           </button>
+          <button
+            class="toolbar-btn secondary"
+            :disabled="overlayLoading"
+            @click="onToggleOverlay"
+          >
+            {{ overlayVisible ? '隐藏遮罩' : '显示遮罩' }}
+          </button>
           <span class="role-tip" v-if="!canEdit">
             当前角色：主治医生，仅可查看报告，不能生成或修改。
           </span>
         </div>
+        <p v-if="overlayError" class="overlay-error">{{ overlayError }}</p>
       </section>
 
       <!-- 右侧：结构化诊断报告 -->
       <section class="panel panel-right">
         <div class="panel-header">
           <span class="panel-title">结构化诊断报告</span>
+          <button
+            class="export-btn secondary"
+            :class="{ disabled: !report || loading || !canEdit }"
+            :disabled="!report || loading || !canEdit"
+            @click="onSaveReport"
+          >
+            保存
+          </button>
+          <button
+            class="export-btn"
+            :class="{ disabled: !report || !previewUrl || loading || exporting }"
+            :disabled="!report || !previewUrl || loading || exporting"
+            @click="onOpenPreview"
+          >
+            {{ exporting ? '导出中...' : '导出PDF' }}
+          </button>
         </div>
 
         <div v-if="loading" class="loading-box">
@@ -148,27 +178,66 @@
           <div class="report-section">
             <h3>基本信息</h3>
             <div class="info-grid">
-              <div>
-                <span class="label">姓名：</span>{{ report.patientInfo.name }}
-              </div>
-              <div>
-                <span class="label">性别：</span>{{ report.patientInfo.gender }}
-              </div>
-              <div>
-                <span class="label">年龄：</span>{{ report.patientInfo.age }}
-              </div>
-              <div>
-                <span class="label">检查日期：</span
-                >{{ report.patientInfo.examDate }}
-              </div>
+              <label class="info-item">
+                <span class="label">姓名：</span>
+                <input
+                  v-model="basicInfo.name"
+                  class="info-input"
+                  type="text"
+                  placeholder="请输入姓名"
+                  :disabled="!canEdit"
+                />
+              </label>
+              <label class="info-item">
+                <span class="label">性别：</span>
+                <select
+                  v-model="basicInfo.gender"
+                  class="info-input"
+                  :disabled="!canEdit"
+                >
+                  <option value="">请选择</option>
+                  <option v-for="item in genderOptions" :key="item" :value="item">
+                    {{ item }}
+                  </option>
+                </select>
+              </label>
+              <label class="info-item">
+                <span class="label">年龄：</span>
+                <input
+                  v-model="basicInfo.age"
+                  class="info-input"
+                  type="text"
+                  placeholder="请输入年龄"
+                  :disabled="!canEdit"
+                />
+              </label>
+              <label class="info-item">
+                <span class="label">检查日期：</span>
+                <input
+                  v-model="basicInfo.examDate"
+                  class="info-input"
+                  type="date"
+                  :disabled="!canEdit"
+                />
+              </label>
             </div>
           </div>
 
           <!-- 阳性发现 -->
           <div class="report-section">
-            <h3>阳性发现</h3>
-            <ul class="finding-list">
-              <li v-for="(item, i) in report.positiveFindings" :key="i">
+            <div class="section-header">
+              <h3>阳性发现</h3>
+              <button
+                v-if="canEdit"
+                class="toolbar-btn secondary mini"
+                type="button"
+                @click="onAddPositive"
+              >
+                新建项
+              </button>
+            </div>
+            <ul class="finding-list" v-if="!canEdit">
+              <li v-for="(item, i) in viewReport.positiveFindings" :key="i">
                 <div class="finding-title">
                   ● 疾病名称：{{ item.diseaseName }}
                 </div>
@@ -179,14 +248,99 @@
                 <div class="finding-sub">解剖位置：{{ item.location }}</div>
               </li>
             </ul>
+            <ul class="finding-list" v-else>
+              <li v-for="(item, i) in editableReport.positiveFindings" :key="i">
+                <div class="finding-edit-row">
+                  <label class="finding-edit-item">
+                    <span class="label">疾病名称：</span>
+                    <input
+                      v-model="item.diseaseName"
+                      class="finding-input"
+                      type="text"
+                    />
+                  </label>
+                  <label class="finding-edit-item">
+                    <span class="label">可能性等级：</span>
+                    <select v-model="item.probabilityLevel" class="finding-input">
+                      <option value="">请选择</option>
+                      <option
+                        v-for="level in probabilityOptions"
+                        :key="level"
+                        :value="level"
+                      >
+                        {{ level }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="finding-edit-item">
+                    <span class="label">严重程度：</span>
+                    <select v-model="item.severity" class="finding-input">
+                      <option value="">请选择</option>
+                      <option
+                        v-for="level in severityOptions"
+                        :key="level"
+                        :value="level"
+                      >
+                        {{ level }}
+                      </option>
+                    </select>
+                  </label>
+                  <label class="finding-edit-item">
+                    <span class="label">解剖位置：</span>
+                    <input
+                      v-model="item.location"
+                      class="finding-input"
+                      type="text"
+                    />
+                  </label>
+                  <div class="finding-edit-actions">
+                    <button
+                      class="toolbar-btn danger mini"
+                      type="button"
+                      @click="onRemovePositive(i)"
+                    >
+                      删除项
+                    </button>
+                  </div>
+                </div>
+              </li>
+            </ul>
           </div>
 
           <!-- 阴性发现 -->
           <div class="report-section">
-            <h3>阴性发现</h3>
-            <ul class="finding-list negative">
-              <li v-for="(item, i) in report.negativeFindings" :key="i">
+            <div class="section-header">
+              <h3>阴性发现</h3>
+              <button
+                v-if="canEdit"
+                class="toolbar-btn secondary mini"
+                type="button"
+                @click="onAddNegative"
+              >
+                新建项
+              </button>
+            </div>
+            <ul class="finding-list negative" v-if="!canEdit">
+              <li v-for="(item, i) in viewReport.negativeFindings" :key="i">
                 - {{ item }}
+              </li>
+            </ul>
+            <ul class="finding-list negative" v-else>
+              <li v-for="(item, i) in editableReport.negativeFindings" :key="i">
+                <div class="negative-edit-row">
+                  <input
+                    v-model="editableReport.negativeFindings[i]"
+                    class="finding-input"
+                    type="text"
+                  />
+                  <button
+                    class="toolbar-btn danger mini"
+                    type="button"
+                    @click="onRemoveNegative(i)"
+                  >
+                    删除项
+                  </button>
+                </div>
               </li>
             </ul>
           </div>
@@ -196,12 +350,80 @@
           <p>尚未生成报告。</p>
           <p class="tip">请上传胸片并点击“生成结构化诊断报告”。</p>
         </div>
+
+        <div v-if="previewVisible" class="preview-mask">
+          <div class="preview-dialog">
+            <div class="preview-header">
+              <span>导出预览</span>
+              <button class="preview-close" @click="onClosePreview">×</button>
+            </div>
+            <div class="preview-body">
+              <div ref="pdfRef" class="pdf-root preview-root">
+                <div class="pdf-header">
+                  <div class="pdf-title">结构化诊断报告</div>
+                  <div class="pdf-subtitle">胸部X光片结构化诊断系统</div>
+                </div>
+
+                <div class="pdf-block">
+                  <div class="pdf-label">基本信息</div>
+                  <div class="pdf-info-grid">
+                    <div>姓名：{{ basicInfo.name }}</div>
+                    <div>性别：{{ basicInfo.gender }}</div>
+                    <div>年龄：{{ basicInfo.age }}</div>
+                    <div>检查日期：{{ basicInfo.examDate }}</div>
+                  </div>
+                </div>
+
+                <div class="pdf-block">
+                  <div class="pdf-label">胸片原图</div>
+                  <div class="pdf-image-box">
+                    <img :src="previewUrl" alt="胸片原图" />
+                  </div>
+                </div>
+
+                <div class="pdf-block">
+                  <div class="pdf-label">阳性发现</div>
+                  <ul class="pdf-list">
+                    <li v-for="(item, i) in viewReport.positiveFindings" :key="i">
+                      疾病名称：{{ item.diseaseName }}；可能性等级：{{
+                        item.probabilityLevel
+                      }}；严重程度：{{ item.severity }}；解剖位置：{{
+                        item.location
+                      }}
+                    </li>
+                  </ul>
+                </div>
+
+                <div class="pdf-block">
+                  <div class="pdf-label">阴性发现</div>
+                  <ul class="pdf-list">
+                    <li v-for="(item, i) in viewReport.negativeFindings" :key="i">
+                      {{ item }}
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <div class="preview-actions">
+              <button class="toolbar-btn secondary" @click="onClosePreview">
+                取消
+              </button>
+              <button class="toolbar-btn primary" @click="onConfirmExport">
+                确认导出
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
 </template>
 
 <script setup>
+import { ref, nextTick, watch, computed } from 'vue'
+import html2canvas from 'html2canvas'
+import jsPDF from 'jspdf'
+
 const props = defineProps({
   currentUser: {
     type: Object,
@@ -239,7 +461,61 @@ const emit = defineEmits([
   'file-selected',
   'file-dropped',
   'generate-report',
+  'save-report',
 ])
+
+const pdfRef = ref(null)
+const exporting = ref(false)
+const previewVisible = ref(false)
+const overlayVisible = ref(false)
+const overlayLoading = ref(false)
+const overlayUrl = ref('')
+const overlayError = ref('')
+const BACKEND_BASE = 'http://localhost:9000'
+const genderOptions = ['男', '女']
+const probabilityOptions = ['1', '2', '3']
+const severityOptions = ['未知', '轻度', '中度', '重度']
+const basicInfo = ref({
+  name: '',
+  gender: '',
+  age: '',
+  examDate: '',
+})
+const editableReport = ref(null)
+const viewReport = computed(() => editableReport.value || props.report)
+
+watch(
+  () => props.report,
+  (report, prevReport) => {
+    if (!report) {
+      basicInfo.value = {
+        name: '',
+        gender: '',
+        age: '',
+        examDate: '',
+      }
+    } else if (!prevReport) {
+      // 初次生成报告时不预填基本信息
+      if (
+        !basicInfo.value.name &&
+        !basicInfo.value.gender &&
+        !basicInfo.value.age &&
+        !basicInfo.value.examDate
+      ) {
+        basicInfo.value = {
+          name: '',
+          gender: '',
+          age: '',
+          examDate: '',
+        }
+      }
+    }
+    editableReport.value = report
+      ? JSON.parse(JSON.stringify(report))
+      : null
+  },
+  { immediate: true }
+)
 
 function onFileChange(e) {
   if (!props.canEdit) return
@@ -256,6 +532,146 @@ function onDrop(e) {
 function onGenerate() {
   if (!props.canEdit) return
   emit('generate-report')
+}
+
+async function onToggleOverlay() {
+  if (overlayVisible.value) {
+    overlayVisible.value = false
+    return
+  }
+  overlayLoading.value = true
+  overlayError.value = ''
+  try {
+    const ts = Date.now()
+    overlayUrl.value = `${BACKEND_BASE}/xray/overlay-sample?ts=${ts}`
+    overlayVisible.value = true
+  } catch (err) {
+    overlayError.value = '遮罩加载失败'
+    overlayVisible.value = false
+    console.error(err)
+  } finally {
+    overlayLoading.value = false
+  }
+}
+
+function onOverlayError() {
+  overlayError.value = '遮罩加载失败，请确认后端服务可用'
+  overlayVisible.value = false
+}
+
+function onSaveReport() {
+  if (!props.canEdit || !editableReport.value) return
+  const payload = {
+    patientInfo: {
+      name: basicInfo.value.name || '',
+      gender: basicInfo.value.gender || '',
+      age: basicInfo.value.age || '',
+      examDate: basicInfo.value.examDate || '',
+    },
+    positiveFindings: editableReport.value.positiveFindings || [],
+    negativeFindings: editableReport.value.negativeFindings || [],
+  }
+  emit('save-report', payload)
+  alert('保存成功')
+}
+
+function onAddPositive() {
+  if (!props.canEdit || !editableReport.value) return
+  editableReport.value.positiveFindings =
+    editableReport.value.positiveFindings || []
+  editableReport.value.positiveFindings.push({
+    diseaseName: '',
+    probabilityLevel: '',
+    severity: '',
+    location: '',
+  })
+}
+
+function onAddNegative() {
+  if (!props.canEdit || !editableReport.value) return
+  editableReport.value.negativeFindings =
+    editableReport.value.negativeFindings || []
+  editableReport.value.negativeFindings.push('')
+}
+
+function onRemovePositive(index) {
+  if (!props.canEdit || !editableReport.value) return
+  if (!Array.isArray(editableReport.value.positiveFindings)) return
+  editableReport.value.positiveFindings.splice(index, 1)
+}
+
+function onRemoveNegative(index) {
+  if (!props.canEdit || !editableReport.value) return
+  if (!Array.isArray(editableReport.value.negativeFindings)) return
+  editableReport.value.negativeFindings.splice(index, 1)
+}
+
+function onOpenPreview() {
+  if (!props.report || !props.previewUrl || props.loading || exporting.value) {
+    return
+  }
+  previewVisible.value = true
+}
+
+function onClosePreview() {
+  if (exporting.value) return
+  previewVisible.value = false
+}
+
+async function onConfirmExport() {
+  await onExportPdf()
+  previewVisible.value = false
+}
+
+async function onExportPdf() {
+  if (!props.report || !props.previewUrl || props.loading || exporting.value) {
+    return
+  }
+  const target = pdfRef.value
+  if (!target) return
+
+  exporting.value = true
+  try {
+    await nextTick()
+    const canvas = await html2canvas(target, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+    })
+
+    const imgData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF({
+      orientation: 'p',
+      unit: 'pt',
+      format: 'a4',
+    })
+
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const imgWidth = pageWidth
+    const imgHeight = (canvas.height * imgWidth) / canvas.width
+    let heightLeft = imgHeight
+    let position = 0
+
+    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+    heightLeft -= pageHeight
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight
+      pdf.addPage()
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight)
+      heightLeft -= pageHeight
+    }
+
+    const name = basicInfo.value.name || '患者'
+    const date = basicInfo.value.examDate || '日期'
+    pdf.save(`结构化诊断报告_${name}_${date}.pdf`)
+  } catch (err) {
+    console.error(err)
+    alert('导出PDF失败，请重试')
+  } finally {
+    exporting.value = false
+  }
 }
 </script>
 
@@ -344,6 +760,11 @@ function onGenerate() {
   border-color: #cbd5e1;
   background: #ffffff;
   color: #475569;
+}
+.toolbar-btn.danger {
+  border-color: #ef4444;
+  background: #fee2e2;
+  color: #b91c1c;
 }
 .toolbar-btn.primary {
   background: #0ea5e9;
@@ -490,6 +911,11 @@ function onGenerate() {
   justify-content: flex-end;
   gap: 10px;
 }
+.overlay-error {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #b91c1c;
+}
 .analyze-btn {
   padding: 6px 18px;
   border-radius: 4px;
@@ -514,6 +940,80 @@ function onGenerate() {
 }
 .panel-right .panel-header {
   margin: -8px -12px 8px;
+  justify-content: space-between;
+}
+.export-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 4px;
+  border: 1px solid #38bdf8;
+  background: #f0f9ff;
+  color: #0369a1;
+  font-size: 12px;
+  cursor: pointer;
+}
+.export-btn.secondary {
+  border-color: #cbd5e1;
+  background: #ffffff;
+  color: #475569;
+}
+.export-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.preview-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+.preview-dialog {
+  width: min(880px, 92vw);
+  max-height: 90vh;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.preview-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid #e2e8f0;
+}
+.preview-close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  color: #475569;
+}
+.preview-body {
+  padding: 12px 16px;
+  overflow: auto;
+  flex: 1;
+  background: #f8fafc;
+}
+.preview-actions {
+  padding: 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.preview-root {
+  transform: scale(0.95);
+  transform-origin: top center;
 }
 .loading-box {
   flex: 1;
@@ -550,10 +1050,41 @@ function onGenerate() {
   font-size: 15px;
   margin-bottom: 4px;
 }
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.toolbar-btn.mini {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
 .info-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 10px;
+}
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.info-input {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  font-size: 13px;
+  color: #0f172a;
+}
+.info-input:disabled {
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 .label {
   color: #6b7280;
@@ -579,6 +1110,35 @@ function onGenerate() {
 .finding-list.negative li {
   border-bottom: none;
 }
+.finding-edit-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+.finding-edit-actions {
+  display: flex;
+  align-items: center;
+}
+.negative-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.finding-edit-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.finding-input {
+  flex: 1;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  font-size: 13px;
+  color: #0f172a;
+}
 
 .empty-report {
   flex: 1;
@@ -590,6 +1150,67 @@ function onGenerate() {
 }
 .tip {
   margin-top: 4px;
+}
+
+.pdf-root {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 794px;
+  padding: 32px 36px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 12px;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+.pdf-root.preview-root {
+  position: static;
+  left: auto;
+  top: auto;
+  width: 100%;
+  padding: 24px 20px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+}
+.pdf-header {
+  text-align: center;
+  margin-bottom: 16px;
+}
+.pdf-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+.pdf-subtitle {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+.pdf-block {
+  margin-bottom: 14px;
+}
+.pdf-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.pdf-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+}
+.pdf-image-box {
+  border: 1px solid #e5e7eb;
+  padding: 6px;
+}
+.pdf-image-box img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.pdf-list {
+  margin: 0;
+  padding-left: 16px;
 }
 
 /* 小屏适配 */

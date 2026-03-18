@@ -13,7 +13,9 @@ segmentation_modules/models/
 segmentation_modules/results/
 segmentation_modules/__pycache__/
 __pycache__/
-package-lock.json
-package.json
+backend/ml_models/seg_models/*
+backend/storage/*
 CLAUDE.md
 checkpoints/
+Agent.md
+

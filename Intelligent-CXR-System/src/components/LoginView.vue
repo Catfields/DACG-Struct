@@ -1,7 +1,7 @@
 <template>
   <div class="login-wrapper">
     <div class="login-card">
-      <h1 class="login-title">胸部X光片结构化诊断系统</h1>
+      <h1 class="login-title">胸片影像智能分割与报告生成系统</h1>
       <p class="login-subtitle">用户登录</p>
 
       <div class="login-form">
@@ -30,12 +30,6 @@
 
         <button class="login-btn" @click="onLogin">登录</button>
 
-        <div class="login-tip">
-          示例账号（前端模拟）：<br />
-          影像科医生：rad1 / 123456<br />
-          主治医生：doc1 / 123456<br />
-          管理员：admin / 123456
-        </div>
       </div>
     </div>
   </div>
@@ -140,9 +134,4 @@ function onLogin() {
   font-size: 14px;
 }
 
-.login-tip {
-  font-size: 12px;
-  color: #9ca3af;
-  line-height: 1.6;
-}
 </style>

@@ -19,3 +19,7 @@ body {
   margin: 0;
   padding: 0;
 }
+.empty-report {
+  text-align: center;      /* 让内部的所有行内元素/文本居中 */
+  padding: 40px 0;         /* 靠上下内边距撑开空间 */
+}

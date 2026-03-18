@@ -22,6 +22,7 @@
       @file-selected="handleFileSelected"
       @file-dropped="handleFileDropped"
       @generate-report="handleGenerateReport"
+      @save-report="handleSaveReport"
     />
   </div>
 </template>
@@ -214,6 +215,10 @@ function handleGenerateReport() {
     report.value = MOCK_REPORT
     loading.value = false
   }, 1000)
+}
+
+function handleSaveReport(payload) {
+  report.value = payload
 }
 </script>
 

@@ -4,6 +4,7 @@
 """
 
 import os
+from pathlib import Path
 
 # 数据路径配置
 DATA_ROOT = "/home/y530/handsome/DACG/data/SCR"
@@ -53,10 +54,11 @@ try:
 except Exception:
     DEVICE = "cpu"
 
-# 输出路径配置
-MODEL_SAVE_DIR = "/home/y530/handsome/DACG/segmentation_modules/models/unet_model"
-RESULTS_DIR = "/home/y530/handsome/DACG/segmentation_modules/results/unet_results"
-LOGS_DIR = "/home/y530/handsome/DACG/segmentation_modules/logs/unet_logs"
+# 输出路径配置（使用项目内相对路径，避免环境固定路径）
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_SAVE_DIR = str(BASE_DIR / "models" / "unet_model")
+RESULTS_DIR = str(BASE_DIR / "results" / "unet_results")
+LOGS_DIR = str(BASE_DIR / "logs" / "unet_logs")
 
 # 创建输出目录
 os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
