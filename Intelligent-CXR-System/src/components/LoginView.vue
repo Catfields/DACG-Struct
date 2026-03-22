@@ -18,11 +18,11 @@
           />
         </div>
         <div class="form-row">
-          <label>角色：</label>
-          <select v-model="role">
-            <option value="radiologist">影像科医生</option>
-            <option value="physician">主治医生</option>
-            <option value="admin">管理员</option>
+          <label>身份：</label>
+          <select v-model="roleName">
+            <option value="影像科医生">影像科医生</option>
+            <option value="主治医生">主治医生</option>
+            <option value="管理员">管理员</option>
           </select>
         </div>
 
@@ -49,13 +49,13 @@ const emit = defineEmits(['login'])
 
 const username = ref('')
 const password = ref('')
-const role = ref('radiologist')
+const roleName = ref('影像科医生')
 
 function onLogin() {
   emit('login', {
-    username: username.value,
+    username: username.value.trim(),
     password: password.value,
-    role: role.value,
+    roleName: roleName.value,
   })
 }
 </script>

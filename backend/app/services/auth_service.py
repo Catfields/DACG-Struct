@@ -6,7 +6,7 @@ from app.core.security import verify_password, create_access_token, create_refre
 from app.core.exceptions import AuthException
 
 
-def authenticate_user(db: Session, login_name: str, password: str) -> tuple[User, str]:
+def authenticate_user(db: Session, login_name: str, password: str, expected_role_name: str) -> tuple[User, str]:
     """Validate user credentials and return user and role_name."""
     stmt = select(User, Role.role_name).join(Role, Role.role_id == User.role_id, isouter=True).where(User.login_name == login_name)
     row = db.execute(stmt).first()
@@ -15,17 +15,32 @@ def authenticate_user(db: Session, login_name: str, password: str) -> tuple[User
     user, role_name = row
     if not role_name:
         raise AuthException("ROLE_NOT_FOUND", "用户角色缺失", status_code=403)
-    if not verify_password(password, user.pwd):
+    if expected_role_name and role_name != expected_role_name:
+        raise AuthException("ROLE_MISMATCH", "身份与用户角色不匹配", status_code=403)
+    # if not verify_password(password, user.pwd):
+    #     raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
+    if password != user.pwd:
         raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
     return user, role_name
 
 
-def login(db: Session, login_name: str, password: str) -> dict[str, str]:
+def login(db: Session, login_name: str, password: str, role_name: str) -> dict[str, str]:
     """Login and return access/refresh tokens."""
-    user, role_name = authenticate_user(db, login_name, password)
+    user, role_name = authenticate_user(db, login_name, password, role_name)
     access_token = create_access_token(subject=str(user.user_id), role_name=role_name)
     refresh_token = create_refresh_token(subject=str(user.user_id))
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": {
+            "user_id": user.user_id,
+            "login_name": user.login_name,
+            "real_name": user.real_name,
+            "role_id": user.role_id,
+            "role_name": role_name,
+        },
+    }
 
 
 def refresh_access_token(db: Session, refresh_token: str) -> dict[str, str]:

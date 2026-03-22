@@ -10,7 +10,7 @@
           {{ currentUser.department }} · {{ currentUser.displayName }}
           （{{ currentUser.roleLabel }}）
         </span>
-        <button class="logout-btn" @click="$emit('logout')">退出</button>
+        <button class="logout-btn" @click="onLogoutClick">退出</button>
       </div>
     </header>
 
@@ -18,21 +18,29 @@
     <section class="toolbar">
       <div class="toolbar-left">
         <label class="toolbar-label">患者姓名：</label>
-        <input class="toolbar-input" placeholder="请输入姓名" />
+        <input
+          v-model="searchForm.name"
+          class="toolbar-input"
+          placeholder="请输入姓名"
+          @keyup.enter="onSearchExamRecords"
+        />
         <label class="toolbar-label">性别：</label>
-        <select class="toolbar-select">
+        <select v-model="searchForm.gender" class="toolbar-select">
           <option value="">全部</option>
           <option value="男">男</option>
           <option value="女">女</option>
         </select>
-        <button class="toolbar-btn">查询</button>
-        <button class="toolbar-btn secondary">重置</button>
+        <button class="toolbar-btn" @click="onSearchExamRecords">查询</button>
+        <button class="toolbar-btn secondary" @click="onResetExamSearch">
+          重置
+        </button>
       </div>
       <div class="toolbar-right">
         <button
           class="toolbar-btn primary"
           :disabled="!canEdit"
           :class="{ disabled: !canEdit }"
+          @click="onCreateExam"
         >
           新建检查
         </button>
@@ -53,24 +61,27 @@
                 <th>姓名</th>
                 <th>性别</th>
                 <th>年龄</th>
-                <th>检查类型</th>
                 <th>检查时间</th>
                 <th>检查号</th>
               </tr>
             </thead>
             <tbody>
               <tr
-                v-for="(exam, idx) in examList"
-                :key="idx"
-                :class="{ active: idx === activeExamIndex }"
-                @click="$emit('select-exam', idx)"
+                v-for="item in filteredExamList"
+                :key="item.index"
+                :class="{ active: item.index === activeExamIndex }"
+                @click="onSelectExamRow(item.index)"
               >
-                <td>{{ exam.name }}</td>
-                <td>{{ exam.gender }}</td>
-                <td>{{ exam.age }}</td>
-                <td>{{ exam.modality }}</td>
-                <td>{{ exam.time }}</td>
-                <td>{{ exam.examNo }}</td>
+                <td>{{ item.exam.name }}</td>
+                <td>{{ item.exam.gender }}</td>
+                <td>{{ item.exam.age }}</td>
+                <td>{{ item.exam.time }}</td>
+                <td>{{ item.exam.examNo }}</td>
+              </tr>
+              <tr v-if="filteredExamList.length === 0">
+                <td class="empty-row" colspan="5">
+                  {{ props.examListError || '未找到匹配的检查记录' }}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -160,8 +171,19 @@
           </button>
           <button
             class="export-btn"
-            :class="{ disabled: !report || !previewUrl || loading || exporting }"
-            :disabled="!report || !previewUrl || loading || exporting"
+            :class="{
+              disabled:
+                !report ||
+                !previewUrl ||
+                loading ||
+                exporting,
+            }"
+            :disabled="
+              !report ||
+              !previewUrl ||
+              loading ||
+              exporting
+            "
             @click="onOpenPreview"
           >
             {{ exporting ? '导出中...' : '导出PDF' }}
@@ -179,7 +201,7 @@
             <h3>基本信息</h3>
             <div class="info-grid">
               <label class="info-item">
-                <span class="label">姓名：</span>
+                <span class="label">姓名<span class="req-star">*</span>：</span>
                 <input
                   v-model="basicInfo.name"
                   class="info-input"
@@ -189,7 +211,7 @@
                 />
               </label>
               <label class="info-item">
-                <span class="label">性别：</span>
+                <span class="label">性别<span class="req-star">*</span>：</span>
                 <select
                   v-model="basicInfo.gender"
                   class="info-input"
@@ -202,7 +224,7 @@
                 </select>
               </label>
               <label class="info-item">
-                <span class="label">年龄：</span>
+                <span class="label">年龄<span class="req-star">*</span>：</span>
                 <input
                   v-model="basicInfo.age"
                   class="info-input"
@@ -212,7 +234,7 @@
                 />
               </label>
               <label class="info-item">
-                <span class="label">检查日期：</span>
+                <span class="label">检查日期<span class="req-star">*</span>：</span>
                 <input
                   v-model="basicInfo.examDate"
                   class="info-input"
@@ -414,6 +436,33 @@
             </div>
           </div>
         </div>
+
+        <div v-if="basicInfoAlertVisible" class="confirm-mask">
+          <div class="confirm-dialog">
+            <div class="confirm-title">提示</div>
+            <div class="confirm-body">{{ basicInfoAlertMessage }}</div>
+            <div class="confirm-actions">
+              <button class="toolbar-btn primary" @click="onCloseBasicInfoAlert">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="logoutConfirmVisible" class="confirm-mask">
+          <div class="confirm-dialog">
+            <div class="confirm-title">确认退出</div>
+            <div class="confirm-body">确定要退出登录吗？</div>
+            <div class="confirm-actions">
+              <button class="toolbar-btn secondary" @click="onCancelLogout">
+                取消
+              </button>
+              <button class="toolbar-btn danger" @click="onConfirmLogout">
+                退出
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -436,6 +485,10 @@ const props = defineProps({
   examList: {
     type: Array,
     required: true,
+  },
+  examListError: {
+    type: String,
+    default: '',
   },
   activeExamIndex: {
     type: Number,
@@ -462,10 +515,75 @@ const emit = defineEmits([
   'file-dropped',
   'generate-report',
   'save-report',
+  'create-exam',
 ])
+
+const searchForm = ref({
+  name: '',
+  gender: '',
+})
+const activeFilter = ref({
+  name: '',
+  gender: '',
+})
+const filteredExamList = computed(() => {
+  const nameKeyword = String(activeFilter.value.name || '')
+    .trim()
+    .toLowerCase()
+  const genderKeyword = String(activeFilter.value.gender || '').trim()
+
+  return props.examList
+    .map((exam, index) => ({ exam, index }))
+    .filter(({ exam }) => {
+      const examName = String(exam?.name || '').toLowerCase()
+      const examGender = String(exam?.gender || '')
+      const matchName = !nameKeyword || examName.includes(nameKeyword)
+      const matchGender = !genderKeyword || examGender === genderKeyword
+      return matchName && matchGender
+    })
+})
+
+function onSearchExamRecords() {
+  activeFilter.value = {
+    name: searchForm.value.name,
+    gender: searchForm.value.gender,
+  }
+}
+
+function onResetExamSearch() {
+  searchForm.value = {
+    name: '',
+    gender: '',
+  }
+  activeFilter.value = {
+    name: '',
+    gender: '',
+  }
+}
+
+function onSelectExamRow(index) {
+  emit('select-exam', index)
+}
+
+const logoutConfirmVisible = ref(false)
+
+function onLogoutClick() {
+  logoutConfirmVisible.value = true
+}
+
+function onCancelLogout() {
+  logoutConfirmVisible.value = false
+}
+
+function onConfirmLogout() {
+  logoutConfirmVisible.value = false
+  emit('logout')
+}
 
 const pdfRef = ref(null)
 const exporting = ref(false)
+const basicInfoAlertVisible = ref(false)
+const basicInfoAlertMessage = ref('')
 const previewVisible = ref(false)
 const overlayVisible = ref(false)
 const overlayLoading = ref(false)
@@ -483,10 +601,19 @@ const basicInfo = ref({
 })
 const editableReport = ref(null)
 const viewReport = computed(() => editableReport.value || props.report)
+const isBasicInfoComplete = computed(() => {
+  const info = basicInfo.value || {}
+  return (
+    String(info.name || '').trim() &&
+    String(info.gender || '').trim() &&
+    String(info.age || '').trim() &&
+    String(info.examDate || '').trim()
+  )
+})
 
 watch(
   () => props.report,
-  (report, prevReport) => {
+  (report) => {
     if (!report) {
       basicInfo.value = {
         name: '',
@@ -494,20 +621,13 @@ watch(
         age: '',
         examDate: '',
       }
-    } else if (!prevReport) {
-      // 初次生成报告时不预填基本信息
-      if (
-        !basicInfo.value.name &&
-        !basicInfo.value.gender &&
-        !basicInfo.value.age &&
-        !basicInfo.value.examDate
-      ) {
-        basicInfo.value = {
-          name: '',
-          gender: '',
-          age: '',
-          examDate: '',
-        }
+    } else {
+      const patient = report.patientInfo || {}
+      basicInfo.value = {
+        name: String(patient.name || ''),
+        gender: String(patient.gender || ''),
+        age: String(patient.age || ''),
+        examDate: String(patient.examDate || ''),
       }
     }
     editableReport.value = report
@@ -532,6 +652,11 @@ function onDrop(e) {
 function onGenerate() {
   if (!props.canEdit) return
   emit('generate-report')
+}
+
+function onCreateExam() {
+  if (!props.canEdit) return
+  emit('create-exam')
 }
 
 async function onToggleOverlay() {
@@ -559,8 +684,33 @@ function onOverlayError() {
   overlayVisible.value = false
 }
 
+function getBasicInfoMissingLabels() {
+  const info = basicInfo.value || {}
+  const missing = []
+  if (!String(info.name || '').trim()) missing.push('姓名')
+  if (!String(info.gender || '').trim()) missing.push('性别')
+  if (!String(info.age || '').trim()) missing.push('年龄')
+  if (!String(info.examDate || '').trim()) missing.push('检查日期')
+  return missing
+}
+
+function showBasicInfoAlert() {
+  const missing = getBasicInfoMissingLabels()
+  if (missing.length === 0) return
+  basicInfoAlertMessage.value = `信息不完整，请填写：${missing.join('、')}`
+  basicInfoAlertVisible.value = true
+}
+
+function onCloseBasicInfoAlert() {
+  basicInfoAlertVisible.value = false
+}
+
 function onSaveReport() {
   if (!props.canEdit || !editableReport.value) return
+  if (!isBasicInfoComplete.value) {
+    showBasicInfoAlert()
+    return
+  }
   const payload = {
     patientInfo: {
       name: basicInfo.value.name || '',
@@ -572,7 +722,6 @@ function onSaveReport() {
     negativeFindings: editableReport.value.negativeFindings || [],
   }
   emit('save-report', payload)
-  alert('保存成功')
 }
 
 function onAddPositive() {
@@ -610,6 +759,10 @@ function onOpenPreview() {
   if (!props.report || !props.previewUrl || props.loading || exporting.value) {
     return
   }
+  if (!isBasicInfoComplete.value) {
+    showBasicInfoAlert()
+    return
+  }
   previewVisible.value = true
 }
 
@@ -619,12 +772,20 @@ function onClosePreview() {
 }
 
 async function onConfirmExport() {
+  if (!isBasicInfoComplete.value) {
+    showBasicInfoAlert()
+    return
+  }
   await onExportPdf()
   previewVisible.value = false
 }
 
 async function onExportPdf() {
   if (!props.report || !props.previewUrl || props.loading || exporting.value) {
+    return
+  }
+  if (!isBasicInfoComplete.value) {
+    showBasicInfoAlert()
     return
   }
   const target = pdfRef.value
@@ -843,6 +1004,10 @@ async function onExportPdf() {
 .list-table tbody tr.active {
   background: #bfdbfe;
 }
+.empty-row {
+  text-align: center;
+  color: #64748b;
+}
 
 /* 中间：图像区域 */
 .panel-middle {
@@ -970,6 +1135,39 @@ async function onExportPdf() {
   justify-content: center;
   z-index: 999;
 }
+.confirm-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.confirm-dialog {
+  width: min(360px, 92vw);
+  background: #ffffff;
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.confirm-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+}
+.confirm-body {
+  font-size: 14px;
+  color: #475569;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .preview-dialog {
   width: min(880px, 92vw);
   max-height: 90vh;
@@ -1012,7 +1210,7 @@ async function onExportPdf() {
   gap: 8px;
 }
 .preview-root {
-  transform: scale(0.95);
+  transform: scale(1);
   transform-origin: top center;
 }
 .loading-box {
@@ -1088,6 +1286,11 @@ async function onExportPdf() {
 }
 .label {
   color: #6b7280;
+}
+.req-star {
+  color: #ef4444;
+  font-weight: 600;
+  margin-left: 2px;
 }
 .finding-list {
   list-style: none;
@@ -1170,8 +1373,27 @@ async function onExportPdf() {
   top: auto;
   width: 100%;
   padding: 24px 20px;
+  font-size: 13.5px;
+  line-height: 1.7;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
   border-radius: 8px;
+}
+.pdf-root.preview-root .pdf-title {
+  font-size: 20px;
+}
+.pdf-root.preview-root .pdf-subtitle {
+  font-size: 13px;
+}
+.pdf-root.preview-root .pdf-label {
+  font-size: 14px;
+}
+.pdf-root.preview-root .pdf-image-box {
+  display: flex;
+  justify-content: center;
+}
+.pdf-root.preview-root .pdf-image-box img {
+  width: 88%;
+  max-width: 520px;
 }
 .pdf-header {
   text-align: center;

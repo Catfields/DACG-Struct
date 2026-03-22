@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -9,13 +10,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 from app.config import settings
-from app.models.xray_info import XrayInfo
-from app.models.segment_result import SegmentResult
 from app.models.translate_record import TranslateRecord
 from app.models.report_info import ReportInfo
 from app.models.user import User
+from app.models.xray_info import XrayInfo
+from app.models.segment_result import SegmentResult
 from app.core.exceptions import AppException
 from app.utils.file_storage import build_report_path
+from app.utils.file_storage import save_upload
 
 
 def _gender_label(gender: int | None) -> str:
@@ -38,11 +40,12 @@ def generate_report(db: Session, xray_id: int) -> ReportInfo:
     if not segment:
         raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
 
-    trans = db.execute(
+    trans_result = db.execute(
         select(TranslateRecord)
         .where(TranslateRecord.segment_id == segment.segment_id)
         .order_by(TranslateRecord.translate_time.desc())
-    ).scalars().first()
+    )
+    trans = trans_result.scalars().first()
 
     if trans and trans.translate_status == 1:
         findings = trans.chinese_translate
@@ -198,3 +201,84 @@ def export_pdf(db: Session, report_id: int) -> str:
     db.commit()
 
     return pdf_path
+
+
+def _build_manual_patient_id() -> str:
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    suffix = uuid4().hex[:6].upper()
+    return f"MANUAL{ts}{suffix}"
+
+
+def manual_save_report(
+    db: Session,
+    *,
+    patient_name: str,
+    patient_gender: int | None,
+    patient_age: int | None,
+    exam_date: str | None,
+    xray_format: str,
+    report_content: str,
+    upload_file,
+    upload_user_id: int,
+) -> ReportInfo:
+    content = str(report_content or "").strip()
+    if not content:
+        raise AppException("EMPTY_REPORT", "报告内容不能为空", status_code=400)
+
+    upload_time = datetime.now()
+    if exam_date:
+        try:
+            upload_time = datetime.strptime(exam_date, "%Y-%m-%d")
+        except ValueError as exc:
+            raise AppException("INVALID_EXAM_DATE", "检查日期格式应为 YYYY-MM-DD", status_code=400) from exc
+
+    patient_id = _build_manual_patient_id()
+    file_path = save_upload(upload_file, patient_id)
+
+    try:
+        xray = XrayInfo(
+            patient_id=patient_id,
+            patient_name=patient_name,
+            patient_gender=patient_gender,
+            patient_age=patient_age,
+            xray_original_path=file_path,
+            xray_format=xray_format or "PNG",
+            upload_user_id=upload_user_id,
+            upload_time=upload_time,
+            segment_status=2,
+        )
+        db.add(xray)
+        db.flush()
+
+        # 手工保存报告时没有分割流水，写入占位分割记录以满足 report_info 外键约束。
+        segment = SegmentResult(
+            xray_id=xray.xray_id,
+            mask_path=file_path,
+            left_lung_view_path=file_path,
+            right_lung_view_path=file_path,
+            heart_view_path=file_path,
+            heart_area=None,
+            left_lung_area=None,
+            right_lung_area=None,
+            model_version="manual-mock",
+        )
+        db.add(segment)
+        db.flush()
+
+        report = ReportInfo(
+            xray_id=xray.xray_id,
+            segment_id=segment.segment_id,
+            report_content=content,
+            report_pdf_path=None,
+            audit_status=0,
+            audit_user_id=None,
+            audit_time=None,
+            revise_content=None,
+        )
+        db.add(report)
+        db.commit()
+        db.refresh(report)
+        return report
+    except Exception:
+        db.rollback()
+        raise

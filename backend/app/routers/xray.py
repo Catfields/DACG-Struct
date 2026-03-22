@@ -19,6 +19,31 @@ router = APIRouter(prefix="/xray", tags=["xray"])
 OVERLAY_SAMPLE_PATH = Path(__file__).resolve().parents[2] / "tests" / "output" / "visualization_validation_overlay.png"
 
 
+def _format_datetime_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _serialize_xray_out(xray):
+    return {
+        "xray_id": xray.xray_id,
+        "patient_id": xray.patient_id,
+        "patient_name": xray.patient_name,
+        "patient_gender": xray.patient_gender,
+        "patient_age": xray.patient_age,
+        "xray_original_path": xray.xray_original_path,
+        "xray_format": xray.xray_format,
+        "upload_user_id": xray.upload_user_id,
+        "upload_time": _format_datetime_value(xray.upload_time),
+        "segment_status": xray.segment_status,
+        "update_time": _format_datetime_value(xray.update_time),
+        "system_id": xray.system_id,
+    }
+
+
 async def _run_segmentation_pipeline(xray_id: int, xray_path: str, app):
     db = SessionLocal()
     try:
@@ -117,7 +142,7 @@ async def upload_xray(
     )
 
     asyncio.create_task(_run_segmentation_pipeline(xray.xray_id, xray.xray_original_path, request.app))
-    return xray
+    return _serialize_xray_out(xray)
 
 
 @router.get("/overlay-sample")
@@ -131,7 +156,7 @@ async def get_overlay_sample():
 async def get_xray_detail(xray_id: int, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN))):
     xray = xray_service.get_xray(db, xray_id)
     segment = xray_service.get_segment_result(db, xray_id)
-    return {"xray": xray, "segment_result": segment}
+    return {"xray": _serialize_xray_out(xray), "segment_result": segment}
 
 
 @router.get("/{xray_id}/mask")
@@ -172,6 +197,19 @@ async def get_visualization(
     return FileResponse(str(visualization_path))
 
 
+@router.get("/{xray_id}/original")
+async def get_original_xray(
+    xray_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
+):
+    xray = xray_service.get_xray(db, xray_id)
+    original_path = Path(xray.xray_original_path)
+    if not original_path.exists():
+        raise AppException("XRAY_FILE_NOT_FOUND", "原始影像文件不存在", status_code=404)
+    return FileResponse(str(original_path))
+
+
 @router.get("/", response_model=list[XrayOut])
 async def list_xrays(
     patient_id: str | None = None,
@@ -180,6 +218,7 @@ async def list_xrays(
     page: int = 1,
     size: int = 20,
     db: Session = Depends(get_db),
-    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
 ):
-    return xray_service.list_xrays(db, patient_id, start_time, end_time, page, size)
+    xrays = xray_service.list_xrays(db, patient_id, start_time, end_time, page, size)
+    return [_serialize_xray_out(xray) for xray in xrays]

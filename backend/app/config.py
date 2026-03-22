@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     STORAGE_ROOT: str = "./storage"
     DOUBAO_API_KEY: str
     DOUBAO_BASE_URL: str
+    DOUBAO_MODEL: str = "doubao-pro"
+    TRANSLATION_MODE: str = "auto"
     HOSPITAL_NAME: str = "医院名称"
     FONT_PATH: str = "./fonts/NotoSansSC-Regular.ttf"
 

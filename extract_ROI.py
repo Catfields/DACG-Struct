@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 
-# 根目录（你可以改成绝对路径）
+# 根目录
 ROOT_DIR = "/home/y530/handsome/DACG/data/mimic-cxr-a"
 
 IMAGES_ROOT = os.path.join(ROOT_DIR, "images")
