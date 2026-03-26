@@ -18,4 +18,4 @@ backend/storage/*
 CLAUDE.md
 checkpoints/
 Agent.md
-
+backend/ml_models/*

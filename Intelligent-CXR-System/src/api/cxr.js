@@ -1,10 +1,10 @@
 function resolveDefaultApiBase() {
   if (typeof window === 'undefined') {
-    return 'http://127.0.0.1:9000'
+    return 'http://127.0.0.1:8000'
   }
   const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:'
   const hostname = window.location.hostname || '127.0.0.1'
-  return `${protocol}//${hostname}:9000`
+  return `${protocol}//${hostname}:8000`
 }
 
 const API_BASE =

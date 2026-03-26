@@ -7,7 +7,15 @@
       @login="handleLogin"
     />
 
-    <!-- 已登录：显示主界面 -->
+    <!-- 已登录：管理员用户管理页 -->
+    <AdminUserManagement
+      v-else-if="currentUser?.role === 'admin' && activePage === 'user-management'"
+      :current-user="currentUser"
+      @back="activePage = 'main'"
+      @logout="handleLogout"
+    />
+
+    <!-- 已登录：业务主界面 -->
     <MainLayout
       v-else
       :current-user="currentUser"
@@ -25,6 +33,7 @@
       @generate-report="handleGenerateReport"
       @save-report="handleSaveReport"
       @create-exam="handleCreateExam"
+      @open-user-management="activePage = 'user-management'"
     />
   </div>
 </template>
@@ -32,6 +41,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import LoginView from './components/LoginView.vue'
+import AdminUserManagement from './components/AdminUserManagement.vue'
 import MainLayout from './components/MainLayout.vue'
 import { loginWithPassword } from './api/auth'
 import { translateText } from './api/translation'
@@ -45,6 +55,7 @@ import {
 /** ===== 登录状态 ===== */
 const currentUser = ref(null)
 const loginError = ref('')
+const activePage = ref('main')
 
 const ROLE_PROFILE_MAP = {
   影像科医生: {
@@ -89,6 +100,7 @@ async function handleLogin(payload) {
       roleLabel: roleProfile.roleLabel,
       department: roleProfile.department,
     }
+    activePage.value = 'main'
 
     if (data.access_token) {
       localStorage.setItem('access_token', data.access_token)
@@ -106,6 +118,7 @@ async function handleLogin(payload) {
 function handleLogout() {
   currentUser.value = null
   loginError.value = ''
+  activePage.value = 'main'
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
   if (previewUrl.value) {

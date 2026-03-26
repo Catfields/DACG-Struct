@@ -17,9 +17,7 @@ def authenticate_user(db: Session, login_name: str, password: str, expected_role
         raise AuthException("ROLE_NOT_FOUND", "用户角色缺失", status_code=403)
     if expected_role_name and role_name != expected_role_name:
         raise AuthException("ROLE_MISMATCH", "身份与用户角色不匹配", status_code=403)
-    # if not verify_password(password, user.pwd):
-    #     raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
-    if password != user.pwd:
+    if not verify_password(password, user.pwd):
         raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
     return user, role_name
 

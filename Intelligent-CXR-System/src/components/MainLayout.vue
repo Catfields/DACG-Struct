@@ -10,6 +10,14 @@
           {{ currentUser.department }} · {{ currentUser.displayName }}
           （{{ currentUser.roleLabel }}）
         </span>
+        <button
+          v-if="isAdmin"
+          class="logout-btn"
+          type="button"
+          @click="onOpenUserManagement"
+        >
+          用户管理
+        </button>
         <button class="logout-btn" @click="onLogoutClick">退出</button>
       </div>
     </header>
@@ -510,6 +518,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'logout',
+  'open-user-management',
   'select-exam',
   'file-selected',
   'file-dropped',
@@ -517,6 +526,8 @@ const emit = defineEmits([
   'save-report',
   'create-exam',
 ])
+
+const isAdmin = computed(() => props.currentUser?.role === 'admin')
 
 const searchForm = ref({
   name: '',
@@ -559,6 +570,10 @@ function onResetExamSearch() {
     name: '',
     gender: '',
   }
+}
+
+function onOpenUserManagement() {
+  emit('open-user-management')
 }
 
 function onSelectExamRow(index) {
