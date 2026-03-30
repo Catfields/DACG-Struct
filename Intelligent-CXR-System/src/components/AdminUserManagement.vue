@@ -228,8 +228,8 @@ defineProps({
 
 const emit = defineEmits(['back', 'logout'])
 
-const DEFAULT_ROLE_ID_RADIOLOGIST = 2
-const DEFAULT_ROLE_ID_ATTENDING = 3
+const DEFAULT_ROLE_ID_RADIOLOGIST = 1
+const DEFAULT_ROLE_ID_ATTENDING = 2
 
 const ROLE_ID_RADIOLOGIST = Number(
   import.meta.env.VITE_ROLE_ID_RADIOLOGIST || DEFAULT_ROLE_ID_RADIOLOGIST
