@@ -112,3 +112,27 @@ def reset_password(db: Session, user_id: int) -> dict:
         },
         "new_password": new_password,
     }
+
+
+def change_password(db: Session, user_id: int, old_password: str, new_password: str) -> None:
+    """Change a user's password after verifying the old password.
+    
+    Args:
+        db: Database session.
+        user_id: ID of the user changing password.
+        old_password: Current password for verification.
+        new_password: New password to set.
+    
+    Raises:
+        AppException: If user not found or old password is incorrect.
+    """
+    from app.core.security import verify_password, get_password_hash
+    
+    user = get_user(db, user_id)
+    if not verify_password(old_password, user.pwd):
+        raise AppException("INVALID_PASSWORD", "旧密码错误", status_code=400)
+    
+    user.pwd = get_password_hash(new_password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from app.dependencies import get_db
+from app.dependencies import get_db, CurrentUser, get_current_user
 from app.schemas.auth import LoginRequest, TokenResponse, RefreshRequest, LoginResponse
-from app.services import auth_service, log_service
+from app.schemas.user import ChangePassword
+from app.services import auth_service, log_service, user_service
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -56,3 +57,14 @@ async def login(
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh(payload: RefreshRequest, db: Session = Depends(get_db)):
     return auth_service.refresh_access_token(db, payload.refresh_token)
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePassword,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change current user's password."""
+    user_service.change_password(db, current_user.user_id, payload.old_password, payload.new_password)
+    return {"message": "密码修改成功"}

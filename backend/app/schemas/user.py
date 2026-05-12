@@ -25,3 +25,8 @@ class UserOut(BaseModel):
     real_name: str
     role_id: int | None = None
     phone: str | None = None
+
+
+class ChangePassword(BaseModel):
+    old_password: str
+    new_password: str

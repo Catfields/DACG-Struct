@@ -6,10 +6,15 @@
         <span class="logo-text">胸片影像智能分割与报告生成系统</span>
       </div>
       <div class="user-area">
-        <span class="user-role">
-          {{ currentUser.department }} · {{ currentUser.displayName }}
-          （{{ currentUser.roleLabel }}）
-        </span>
+        <div class="user-dropdown">
+          <span class="user-role">
+            {{ currentUser.department }} · {{ currentUser.displayName }}
+            （{{ currentUser.roleLabel }}）
+          </span>
+          <div class="dropdown-menu">
+            <button class="dropdown-item" @click="onChangePasswordClick">修改密码</button>
+          </div>
+        </div>
         <button
           v-if="isAdmin"
           class="logout-btn"
@@ -515,6 +520,32 @@
             </div>
           </div>
         </div>
+        <div v-if="showChangePasswordModal" class="confirm-mask">
+          <div class="confirm-dialog">
+            <div class="confirm-title">修改密码</div>
+            <div class="confirm-body">
+              <div class="form-group">
+                <label>旧密码：</label>
+                <input v-model="oldPassword" type="password" class="form-input" placeholder="请输入旧密码" />
+              </div>
+              <div class="form-group">
+                <label>新密码：</label>
+                <input v-model="newPassword" type="password" class="form-input" placeholder="请输入新密码" />
+              </div>
+              <div class="form-group">
+                <label>确认新密码：</label>
+                <input v-model="confirmPassword" type="password" class="form-input" placeholder="请再次输入新密码" />
+              </div>
+              <div v-if="changePasswordError" class="error-message">{{ changePasswordError }}</div>
+            </div>
+            <div class="confirm-actions">
+              <button class="toolbar-btn secondary" @click="onCancelChangePassword">取消</button>
+              <button class="toolbar-btn primary" :disabled="changePasswordLoading" @click="onConfirmChangePassword">
+                {{ changePasswordLoading ? '提交中...' : '确认修改' }}
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -530,6 +561,7 @@ import {
   fetchXrayMaskCoordinates,
   triggerSegmentation,
 } from '../api/cxr'
+import { changePassword } from '../api/auth'
 
 const props = defineProps({
   currentUser: {
@@ -655,6 +687,47 @@ function onConfirmLogout() {
   emit('logout')
 }
 
+function onChangePasswordClick() {
+  showChangePasswordModal.value = true
+  oldPassword.value = ''
+  newPassword.value = ''
+  confirmPassword.value = ''
+  changePasswordError.value = ''
+}
+
+function onCancelChangePassword() {
+  showChangePasswordModal.value = false
+}
+
+async function onConfirmChangePassword() {
+  if (!oldPassword.value || !newPassword.value || !confirmPassword.value) {
+    changePasswordError.value = '请填写所有字段'
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    changePasswordError.value = '新密码与确认密码不一致'
+    return
+  }
+  if (newPassword.value.length < 6) {
+    changePasswordError.value = '新密码长度至少6位'
+    return
+  }
+  changePasswordLoading.value = true
+  changePasswordError.value = ''
+  try {
+    await changePassword({
+      oldPassword: oldPassword.value,
+      newPassword: newPassword.value,
+    })
+    showChangePasswordModal.value = false
+    alert('密码修改成功')
+  } catch (err) {
+    changePasswordError.value = err.message || '密码修改失败'
+  } finally {
+    changePasswordLoading.value = false
+  }
+}
+
 const pdfRef = ref(null)
 const exporting = ref(false)
 const basicInfoAlertVisible = ref(false)
@@ -677,6 +750,12 @@ const MAGNIFIER_ZOOM = 2.35
 const genderOptions = ['男', '女']
 const probabilityOptions = ['1', '2', '3']
 const severityOptions = ['未知', '轻度', '中度', '重度']
+const showChangePasswordModal = ref(false)
+const oldPassword = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const changePasswordLoading = ref(false)
+const changePasswordError = ref('')
 const basicInfo = ref({
   name: '',
   gender: '',
@@ -1256,6 +1335,39 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   font-size: 14px;
+}
+.user-dropdown {
+  position: relative;
+  cursor: pointer;
+}
+.user-dropdown:hover .dropdown-menu {
+  display: block;
+}
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  z-index: 1000;
+  min-width: 120px;
+}
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: #374151;
+  text-align: left;
+}
+.dropdown-item:hover {
+  background: #f3f4f6;
 }
 .logout-btn {
   height: 28px;
@@ -1900,5 +2012,32 @@ onUnmounted(() => {
   .main-layout {
     grid-template-columns: 1fr;
   }
+}
+.form-group {
+  margin-bottom: 12px;
+}
+.form-group label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 14px;
+  color: #374151;
+}
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.form-input:focus {
+  outline: none;
+  border-color: #0ea5e9;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.2);
+}
+.error-message {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 8px;
 }
 </style>
