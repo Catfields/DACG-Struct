@@ -3,6 +3,8 @@ from sqlalchemy import select
 from app.models.user import User
 from app.core.security import get_password_hash
 from app.core.exceptions import AppException
+import secrets
+import string
 
 
 def create_user(db: Session, data) -> User:
@@ -76,3 +78,37 @@ def delete_user(db: Session, user_id: int) -> None:
     user = get_user(db, user_id)
     db.delete(user)
     db.commit()
+
+
+def _generate_temp_password(length: int = 10) -> str:
+    """Generate a random temporary password with guaranteed complexity."""
+    alphabet = string.ascii_letters + string.digits
+    # Ensure at least one uppercase, one lowercase, one digit
+    while True:
+        pwd = ''.join(secrets.choice(alphabet) for _ in range(length))
+        if (any(c.isupper() for c in pwd)
+                and any(c.islower() for c in pwd)
+                and any(c.isdigit() for c in pwd)):
+            return pwd
+
+
+def reset_password(db: Session, user_id: int) -> dict:
+    """Reset a user's password to a random temporary password.
+    
+    Returns a dict with user info and the new plaintext password
+    (only available at this moment).
+    """
+    user = get_user(db, user_id)
+    new_password = _generate_temp_password()
+    user.pwd = get_password_hash(new_password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "user": {
+            "user_id": user.user_id,
+            "login_name": user.login_name,
+            "real_name": user.real_name,
+        },
+        "new_password": new_password,
+    }

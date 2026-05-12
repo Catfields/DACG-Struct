@@ -9,7 +9,7 @@
         <div class="login-form">
           <div class="form-row">
             <label>用户名：</label>
-            <input v-model="username" placeholder="请输入用户名" />
+            <input v-model="username" placeholder="请输入用户名或手机号" />
           </div>
           <div class="form-row">
             <label>密码：</label>

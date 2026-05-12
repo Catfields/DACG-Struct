@@ -338,7 +338,7 @@
           一次性密码：<strong>{{ passwordDialog.password }}</strong>
         </p>
         <p class="password-hint">
-          请立即复制并分发给对应医生，关闭后不再展示明文密码。
+          ⚠️ 请务必立即复制并妥善保存以上账号和密码，关闭后将无法再次查看！此密码仅展示一次，请及时分发给对应医生。
         </p>
         <div class="dialog-actions">
           <button class="toolbar-btn" @click="onCopyPassword">复制信息</button>

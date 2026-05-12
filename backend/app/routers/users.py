@@ -62,3 +62,18 @@ async def delete_user(user_id: int, request: Request, db: Session = Depends(get_
         operation_status=1,
     )
     return {"status": "ok"}
+
+
+@router.post("/{user_id}/reset-password", dependencies=[Depends(require_roles(RoleName.ADMIN))])
+async def reset_password(user_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.ADMIN))):
+    result = user_service.reset_password(db, user_id)
+    await log_service.write(
+        db=db,
+        user_id=current_user.user_id,
+        user_name=current_user.real_name,
+        operation_type="用户管理",
+        operation_content=f"重置用户 {result['user']['login_name']} 密码",
+        ip_address=request.client.host if request.client else None,
+        operation_status=1,
+    )
+    return result

@@ -76,7 +76,9 @@ export async function updateUser(userId, payload) {
 }
 
 export async function resetUserPassword(userId) {
-  throw new Error('后端未提供重置密码接口（/users/{id}/reset-password）')
+  return requestJson(`/users/${userId}/reset-password`, {
+    method: 'POST',
+  })
 }
 
 export async function deleteUser(userId) {
