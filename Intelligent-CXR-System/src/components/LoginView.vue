@@ -1,35 +1,38 @@
 <template>
   <div class="login-wrapper">
-    <div class="login-card">
-      <h1 class="login-title">胸片影像智能分割与报告生成系统</h1>
-      <p class="login-subtitle">用户登录</p>
+    <div class="login-background"></div>
+    <div class="login-content">
+      <div class="login-card">
+        <h1 class="login-title">胸片影像智能分割与报告生成系统</h1>
+        <p class="login-subtitle">用户登录</p>
 
-      <div class="login-form">
-        <div class="form-row">
-          <label>用户名：</label>
-          <input v-model="username" placeholder="请输入用户名" />
+        <div class="login-form">
+          <div class="form-row">
+            <label>用户名：</label>
+            <input v-model="username" placeholder="请输入用户名" />
+          </div>
+          <div class="form-row">
+            <label>密码：</label>
+            <input
+              v-model="password"
+              type="password"
+              placeholder="请输入密码"
+            />
+          </div>
+          <div class="form-row">
+            <label>身份：</label>
+            <select v-model="roleName">
+              <option value="影像科医生">影像科医生</option>
+              <option value="主治医生">主治医生</option>
+              <option value="管理员">管理员</option>
+            </select>
+          </div>
+
+          <div class="login-error" v-if="error">{{ error }}</div>
+
+          <button class="login-btn" @click="onLogin">登录</button>
+
         </div>
-        <div class="form-row">
-          <label>密码：</label>
-          <input
-            v-model="password"
-            type="password"
-            placeholder="请输入密码"
-          />
-        </div>
-        <div class="form-row">
-          <label>身份：</label>
-          <select v-model="roleName">
-            <option value="影像科医生">影像科医生</option>
-            <option value="主治医生">主治医生</option>
-            <option value="管理员">管理员</option>
-          </select>
-        </div>
-
-        <div class="login-error" v-if="error">{{ error }}</div>
-
-        <button class="login-btn" @click="onLogin">登录</button>
-
       </div>
     </div>
   </div>
@@ -64,8 +67,30 @@ function onLogin() {
 .login-wrapper {
   flex: 1;
   display: flex;
+  position: relative;
+  height: 100vh;
+}
+
+.login-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background-size: cover;
+  background-position: center;
+  background-image: url('/medical-background.jpg');
+}
+
+.login-content {
+  width: 40%;
+  display: flex;
   align-items: center;
   justify-content: center;
+  margin-left: auto;
+  position: relative;
+  z-index: 10;
 }
 
 .login-card {
@@ -132,6 +157,33 @@ function onLogin() {
   margin-top: 4px;
   margin-bottom: 8px;
   font-size: 14px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .login-wrapper {
+    flex-direction: column;
+  }
+  
+  .login-background {
+    display: none;
+  }
+  
+  .login-content {
+    width: 100%;
+    height: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 1024px) {
+  .login-background {
+    width: 50%;
+  }
+  
+  .login-content {
+    width: 50%;
+  }
 }
 
 </style>

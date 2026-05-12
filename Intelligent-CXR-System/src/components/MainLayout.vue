@@ -128,14 +128,53 @@
         </div>
 
         <!-- 预览区域 -->
-        <div class="image-wrapper" v-if="previewUrl || overlayVisible">
+        <div
+          v-if="previewUrl || overlayVisible"
+          ref="imageStageRef"
+          class="image-wrapper"
+          :class="{ 'overlay-enabled': overlayVisible && overlayUrl }"
+          @pointermove="onImagePointerMove"
+          @pointerleave="clearActiveOrgan"
+        >
+          <img
+            v-if="previewUrl"
+            ref="previewImgRef"
+            class="xray-image"
+            :src="previewUrl"
+            alt="胸片预览"
+          />
           <img
             v-if="overlayVisible && overlayUrl"
+            class="mask-overlay-image"
             :src="overlayUrl"
             alt="器官遮罩预览"
             @error="onOverlayError"
           />
-          <img v-else :src="previewUrl" alt="胸片预览" />
+          <div
+            v-if="activeOrgan"
+            class="organ-hit-label"
+            :style="organLabelStyle"
+          >
+            {{ activeOrgan.display_name }}
+          </div>
+          <div
+            v-if="activeOrgan"
+            class="organ-magnifier"
+            :style="magnifierPanelStyle"
+          >
+            <div class="magnifier-title">{{ activeOrgan.display_name }}</div>
+            <div class="magnifier-viewport">
+              <div class="magnifier-layers" :style="magnifierContentStyle">
+                <img :src="previewUrl" alt="" />
+                <img
+                  v-if="overlayUrl"
+                  class="magnifier-mask"
+                  :src="overlayUrl"
+                  alt=""
+                />
+              </div>
+            </div>
+          </div>
         </div>
         <div class="image-placeholder" v-else>
           <span>尚未上传胸片</span>
@@ -155,8 +194,10 @@
             class="toolbar-btn secondary"
             :disabled="overlayLoading"
             @click="onToggleOverlay"
+            :title="currentXrayId ? '显示AI分割结果' : '显示示例遮罩'"
           >
-            {{ overlayVisible ? '隐藏遮罩' : '显示遮罩' }}
+            <span v-if="overlayLoading">加载中...</span>
+            <span v-else>{{ overlayVisible ? '隐藏遮罩' : '显示遮罩' }}</span>
           </button>
           <span class="role-tip" v-if="!canEdit">
             当前角色：主治医生，仅可查看报告，不能生成或修改。
@@ -203,7 +244,7 @@
           <p>正在分析胸片，请稍候...</p>
         </div>
 
-        <div v-else-if="report" class="report-content">
+        <div v-else-if="previewUrl || report" class="report-content">
           <!-- 基本信息 -->
           <div class="report-section">
             <h3>基本信息</h3>
@@ -214,7 +255,7 @@
                   v-model="basicInfo.name"
                   class="info-input"
                   type="text"
-                  placeholder="请输入姓名"
+                  placeholder="示例：张三"
                   :disabled="!canEdit"
                 />
               </label>
@@ -237,7 +278,7 @@
                   v-model="basicInfo.age"
                   class="info-input"
                   type="text"
-                  placeholder="请输入年龄"
+                  placeholder="示例：45"
                   :disabled="!canEdit"
                 />
               </label>
@@ -253,132 +294,135 @@
             </div>
           </div>
 
-          <!-- 阳性发现 -->
-          <div class="report-section">
-            <div class="section-header">
-              <h3>阳性发现</h3>
-              <button
-                v-if="canEdit"
-                class="toolbar-btn secondary mini"
-                type="button"
-                @click="onAddPositive"
-              >
-                新建项
-              </button>
+          <!-- 阳性发现和阴性发现 - 仅在生成报告后显示 -->
+          <template v-if="report">
+            <!-- 阳性发现 -->
+            <div class="report-section">
+              <div class="section-header">
+                <h3>阳性发现</h3>
+                <button
+                  v-if="canEdit"
+                  class="toolbar-btn secondary mini"
+                  type="button"
+                  @click="onAddPositive"
+                >
+                  新建项
+                </button>
+              </div>
+              <ul class="finding-list" v-if="!canEdit">
+                <li v-for="(item, i) in viewReport.positiveFindings" :key="i">
+                  <div class="finding-title">
+                    ● 疾病名称：{{ item.diseaseName }}
+                  </div>
+                  <div class="finding-sub">
+                    可能性等级：{{ item.probabilityLevel }}
+                  </div>
+                  <div class="finding-sub">严重程度：{{ item.severity }}</div>
+                  <div class="finding-sub">解剖位置：{{ item.location }}</div>
+                </li>
+              </ul>
+              <ul class="finding-list" v-else>
+                <li v-for="(item, i) in editableReport.positiveFindings" :key="i">
+                  <div class="finding-edit-row">
+                    <label class="finding-edit-item">
+                      <span class="label">疾病名称：</span>
+                      <input
+                        v-model="item.diseaseName"
+                        class="finding-input"
+                        type="text"
+                      />
+                    </label>
+                    <label class="finding-edit-item">
+                      <span class="label">可能性等级：</span>
+                      <select v-model="item.probabilityLevel" class="finding-input">
+                        <option value="">请选择</option>
+                        <option
+                          v-for="level in probabilityOptions"
+                          :key="level"
+                          :value="level"
+                        >
+                          {{ level }}
+                        </option>
+                      </select>
+                    </label>
+                    <label class="finding-edit-item">
+                      <span class="label">严重程度：</span>
+                      <select v-model="item.severity" class="finding-input">
+                        <option value="">请选择</option>
+                        <option
+                          v-for="level in severityOptions"
+                          :key="level"
+                          :value="level"
+                        >
+                          {{ level }}
+                        </option>
+                      </select>
+                    </label>
+                    <label class="finding-edit-item">
+                      <span class="label">解剖位置：</span>
+                      <input
+                        v-model="item.location"
+                        class="finding-input"
+                        type="text"
+                      />
+                    </label>
+                    <div class="finding-edit-actions">
+                      <button
+                        class="toolbar-btn danger mini"
+                        type="button"
+                        @click="onRemovePositive(i)"
+                      >
+                        删除项
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              </ul>
             </div>
-            <ul class="finding-list" v-if="!canEdit">
-              <li v-for="(item, i) in viewReport.positiveFindings" :key="i">
-                <div class="finding-title">
-                  ● 疾病名称：{{ item.diseaseName }}
-                </div>
-                <div class="finding-sub">
-                  可能性等级：{{ item.probabilityLevel }}
-                </div>
-                <div class="finding-sub">严重程度：{{ item.severity }}</div>
-                <div class="finding-sub">解剖位置：{{ item.location }}</div>
-              </li>
-            </ul>
-            <ul class="finding-list" v-else>
-              <li v-for="(item, i) in editableReport.positiveFindings" :key="i">
-                <div class="finding-edit-row">
-                  <label class="finding-edit-item">
-                    <span class="label">疾病名称：</span>
+
+            <!-- 阴性发现 -->
+            <div class="report-section">
+              <div class="section-header">
+                <h3>阴性发现</h3>
+                <button
+                  v-if="canEdit"
+                  class="toolbar-btn secondary mini"
+                  type="button"
+                  @click="onAddNegative"
+                >
+                  新建项
+                </button>
+              </div>
+              <ul class="finding-list negative" v-if="!canEdit">
+                <li v-for="(item, i) in viewReport.negativeFindings" :key="i">
+                  - {{ item }}
+                </li>
+              </ul>
+              <ul class="finding-list negative" v-else>
+                <li v-for="(item, i) in editableReport.negativeFindings" :key="i">
+                  <div class="negative-edit-row">
                     <input
-                      v-model="item.diseaseName"
+                      v-model="editableReport.negativeFindings[i]"
                       class="finding-input"
                       type="text"
                     />
-                  </label>
-                  <label class="finding-edit-item">
-                    <span class="label">可能性等级：</span>
-                    <select v-model="item.probabilityLevel" class="finding-input">
-                      <option value="">请选择</option>
-                      <option
-                        v-for="level in probabilityOptions"
-                        :key="level"
-                        :value="level"
-                      >
-                        {{ level }}
-                      </option>
-                    </select>
-                  </label>
-                  <label class="finding-edit-item">
-                    <span class="label">严重程度：</span>
-                    <select v-model="item.severity" class="finding-input">
-                      <option value="">请选择</option>
-                      <option
-                        v-for="level in severityOptions"
-                        :key="level"
-                        :value="level"
-                      >
-                        {{ level }}
-                      </option>
-                    </select>
-                  </label>
-                  <label class="finding-edit-item">
-                    <span class="label">解剖位置：</span>
-                    <input
-                      v-model="item.location"
-                      class="finding-input"
-                      type="text"
-                    />
-                  </label>
-                  <div class="finding-edit-actions">
                     <button
                       class="toolbar-btn danger mini"
                       type="button"
-                      @click="onRemovePositive(i)"
+                      @click="onRemoveNegative(i)"
                     >
                       删除项
                     </button>
                   </div>
-                </div>
-              </li>
-            </ul>
-          </div>
-
-          <!-- 阴性发现 -->
-          <div class="report-section">
-            <div class="section-header">
-              <h3>阴性发现</h3>
-              <button
-                v-if="canEdit"
-                class="toolbar-btn secondary mini"
-                type="button"
-                @click="onAddNegative"
-              >
-                新建项
-              </button>
+                </li>
+              </ul>
             </div>
-            <ul class="finding-list negative" v-if="!canEdit">
-              <li v-for="(item, i) in viewReport.negativeFindings" :key="i">
-                - {{ item }}
-              </li>
-            </ul>
-            <ul class="finding-list negative" v-else>
-              <li v-for="(item, i) in editableReport.negativeFindings" :key="i">
-                <div class="negative-edit-row">
-                  <input
-                    v-model="editableReport.negativeFindings[i]"
-                    class="finding-input"
-                    type="text"
-                  />
-                  <button
-                    class="toolbar-btn danger mini"
-                    type="button"
-                    @click="onRemoveNegative(i)"
-                  >
-                    删除项
-                  </button>
-                </div>
-              </li>
-            </ul>
-          </div>
+          </template>
         </div>
 
         <div v-else class="empty-report">
-          <p>尚未生成报告。</p>
-          <p class="tip">请上传胸片并点击“生成结构化诊断报告”。</p>
+          <p>尚未上传胸片。</p>
+          <p class="tip">请先上传胸片图像。</p>
         </div>
 
         <div v-if="previewVisible" class="preview-mask">
@@ -477,9 +521,15 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch, computed } from 'vue'
+import { ref, nextTick, watch, computed, onUnmounted } from 'vue'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
+import {
+  fetchSegmentStatus,
+  fetchXrayMaskBlob,
+  fetchXrayMaskCoordinates,
+  triggerSegmentation,
+} from '../api/cxr'
 
 const props = defineProps({
   currentUser: {
@@ -528,6 +578,16 @@ const emit = defineEmits([
 ])
 
 const isAdmin = computed(() => props.currentUser?.role === 'admin')
+
+// Get current X-ray ID for AI segmentation
+const currentXrayId = computed(() => {
+  // For uploaded files, we need to handle differently
+  if (props.previewUrl && !props.examList[props.activeExamIndex]) {
+    return null // Uploaded file not yet saved
+  }
+  const currentExam = props.examList[props.activeExamIndex]
+  return currentExam?.xrayId || null
+})
 
 const searchForm = ref({
   name: '',
@@ -603,8 +663,17 @@ const previewVisible = ref(false)
 const overlayVisible = ref(false)
 const overlayLoading = ref(false)
 const overlayUrl = ref('')
+const overlayXrayId = ref(null)
+const maskCoordinates = ref(null)
 const overlayError = ref('')
-const BACKEND_BASE = 'http://localhost:9000'
+const imageStageRef = ref(null)
+const previewImgRef = ref(null)
+const activeOrgan = ref(null)
+const pointerState = ref(null)
+const MAGNIFIER_SIZE = 180
+const MAGNIFIER_PANEL_WIDTH = 204
+const MAGNIFIER_PANEL_HEIGHT = 230
+const MAGNIFIER_ZOOM = 2.35
 const genderOptions = ['男', '女']
 const probabilityOptions = ['1', '2', '3']
 const severityOptions = ['未知', '轻度', '中度', '重度']
@@ -624,6 +693,49 @@ const isBasicInfoComplete = computed(() => {
     String(info.age || '').trim() &&
     String(info.examDate || '').trim()
   )
+})
+const organLabelStyle = computed(() => {
+  const point = pointerState.value
+  if (!point) return {}
+  return {
+    left: `${clamp(point.stageX + 10, 8, Math.max(8, point.stageWidth - 90))}px`,
+    top: `${clamp(point.stageY - 28, 8, Math.max(8, point.stageHeight - 32))}px`,
+  }
+})
+const magnifierPanelStyle = computed(() => {
+  const point = pointerState.value
+  if (!point) return {}
+  let left = point.stageX + 18
+  if (left + MAGNIFIER_PANEL_WIDTH > point.stageWidth - 8) {
+    left = point.stageX - MAGNIFIER_PANEL_WIDTH - 18
+  }
+  const top = clamp(
+    point.stageY - MAGNIFIER_PANEL_HEIGHT / 2,
+    8,
+    Math.max(8, point.stageHeight - MAGNIFIER_PANEL_HEIGHT - 8)
+  )
+  return {
+    left: `${clamp(left, 8, Math.max(8, point.stageWidth - MAGNIFIER_PANEL_WIDTH - 8))}px`,
+    top: `${top}px`,
+  }
+})
+const magnifierContentStyle = computed(() => {
+  const point = pointerState.value
+  const display = point?.displayRect
+  const size = maskCoordinates.value?.image_size || {}
+  const imageWidth = Number(size.width) || previewImgRef.value?.naturalWidth || 0
+  const imageHeight = Number(size.height) || previewImgRef.value?.naturalHeight || 0
+  if (!point || !display || !imageWidth || !imageHeight) return {}
+
+  const sourceX = (point.imageX / imageWidth) * display.width
+  const sourceY = (point.imageY / imageHeight) * display.height
+  const offsetX = MAGNIFIER_SIZE / 2 - sourceX * MAGNIFIER_ZOOM
+  const offsetY = MAGNIFIER_SIZE / 2 - sourceY * MAGNIFIER_ZOOM
+  return {
+    width: `${display.width}px`,
+    height: `${display.height}px`,
+    transform: `translate(${offsetX}px, ${offsetY}px) scale(${MAGNIFIER_ZOOM})`,
+  }
 })
 
 watch(
@@ -674,21 +786,160 @@ function onCreateExam() {
   emit('create-exam')
 }
 
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function clearActiveOrgan() {
+  activeOrgan.value = null
+  pointerState.value = null
+}
+
+function revokeOverlayUrl() {
+  if (overlayUrl.value) {
+    URL.revokeObjectURL(overlayUrl.value)
+    overlayUrl.value = ''
+  }
+}
+
+function resetOverlay(clearError = true) {
+  overlayVisible.value = false
+  overlayLoading.value = false
+  overlayXrayId.value = null
+  maskCoordinates.value = null
+  clearActiveOrgan()
+  revokeOverlayUrl()
+  if (clearError) {
+    overlayError.value = ''
+  }
+}
+
+async function createTransparentMaskObjectUrl(maskBlob) {
+  const bitmap = await createImageBitmap(maskBlob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(bitmap, 0, 0)
+  if (typeof bitmap.close === 'function') {
+    bitmap.close()
+  }
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const data = imageData.data
+  for (let i = 0; i < data.length; i += 4) {
+    const isBackground = data[i] < 4 && data[i + 1] < 4 && data[i + 2] < 4
+    data[i + 3] = isBackground ? 0 : 255
+  }
+  ctx.putImageData(imageData, 0, 0)
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Mask 转换失败'))
+        return
+      }
+      resolve(URL.createObjectURL(blob))
+    }, 'image/png')
+  })
+}
+
+function normalizeMaskCoordinates(payload) {
+  const organs = Array.isArray(payload?.organs) ? payload.organs : []
+  return {
+    ...payload,
+    image_size: {
+      width: Number(payload?.image_size?.width) || 0,
+      height: Number(payload?.image_size?.height) || 0,
+    },
+    organs: organs.map((organ) => ({
+      ...organ,
+      area: Number(organ?.area) || 0,
+      bbox: organ?.bbox || null,
+      contours: Array.isArray(organ?.contours) ? organ.contours : [],
+    })),
+  }
+}
+
+async function loadOverlayAssets(xrayId) {
+  const [maskBlob, coordinates] = await Promise.all([
+    fetchXrayMaskBlob(xrayId),
+    fetchXrayMaskCoordinates(xrayId),
+  ])
+  const nextOverlayUrl = await createTransparentMaskObjectUrl(maskBlob)
+  if (currentXrayId.value !== xrayId) {
+    URL.revokeObjectURL(nextOverlayUrl)
+    return
+  }
+  revokeOverlayUrl()
+  overlayUrl.value = nextOverlayUrl
+  overlayXrayId.value = xrayId
+  maskCoordinates.value = normalizeMaskCoordinates(coordinates)
+  overlayVisible.value = true
+  overlayError.value = ''
+  clearActiveOrgan()
+}
+
+async function waitForSegmentationReady(xrayId) {
+  const pollInterval = 2000
+  const maxPolls = 30
+  for (let pollCount = 0; pollCount < maxPolls; pollCount += 1) {
+    await new Promise((resolve) => setTimeout(resolve, pollInterval))
+    const pollData = await fetchSegmentStatus(xrayId)
+    const currentStatus = pollData.segment_status
+    if (currentStatus === 2) return
+    if (currentStatus === 3) {
+      throw new Error('分割失败，请重试')
+    }
+  }
+  throw new Error('分割超时，请稍后重试')
+}
+
 async function onToggleOverlay() {
   if (overlayVisible.value) {
     overlayVisible.value = false
+    clearActiveOrgan()
     return
   }
+
+  const xrayId = currentXrayId.value
+  if (!xrayId) {
+    overlayError.value = '请先选择检查记录'
+    return
+  }
+
+  if (overlayUrl.value && overlayXrayId.value === xrayId && maskCoordinates.value) {
+    overlayVisible.value = true
+    overlayError.value = ''
+    return
+  }
+
   overlayLoading.value = true
   overlayError.value = ''
+
   try {
-    const ts = Date.now()
-    overlayUrl.value = `${BACKEND_BASE}/xray/overlay-sample?ts=${ts}`
-    overlayVisible.value = true
+    const statusData = await fetchSegmentStatus(xrayId)
+    const segmentStatus = statusData.segment_status
+
+    if (segmentStatus === 2) {
+      await loadOverlayAssets(xrayId)
+      return
+    }
+
+    if (segmentStatus === 0 || segmentStatus === 3) {
+      await triggerSegmentation(xrayId)
+      overlayError.value = '分割任务已启动，请稍候...'
+    } else if (segmentStatus === 1) {
+      overlayError.value = '分割正在进行中，请稍候...'
+    }
+
+    await waitForSegmentationReady(xrayId)
+    await loadOverlayAssets(xrayId)
   } catch (err) {
-    overlayError.value = '遮罩加载失败'
+    console.error('分割加载失败:', err)
+    overlayError.value = err.message || '遮罩加载失败'
     overlayVisible.value = false
-    console.error(err)
+    clearActiveOrgan()
   } finally {
     overlayLoading.value = false
   }
@@ -697,6 +948,125 @@ async function onToggleOverlay() {
 function onOverlayError() {
   overlayError.value = '遮罩加载失败，请确认后端服务可用'
   overlayVisible.value = false
+  clearActiveOrgan()
+}
+
+function getRenderedImageRect() {
+  const stage = imageStageRef.value
+  const image = previewImgRef.value
+  if (!stage || !image) return null
+
+  const stageRect = stage.getBoundingClientRect()
+  const size = maskCoordinates.value?.image_size || {}
+  const imageWidth = Number(size.width) || image.naturalWidth
+  const imageHeight = Number(size.height) || image.naturalHeight
+  if (!imageWidth || !imageHeight || !stageRect.width || !stageRect.height) {
+    return null
+  }
+
+  const scale = Math.min(stageRect.width / imageWidth, stageRect.height / imageHeight)
+  const width = imageWidth * scale
+  const height = imageHeight * scale
+  return {
+    left: (stageRect.width - width) / 2,
+    top: (stageRect.height - height) / 2,
+    width,
+    height,
+    stageWidth: stageRect.width,
+    stageHeight: stageRect.height,
+  }
+}
+
+function onImagePointerMove(event) {
+  if (!overlayVisible.value || !maskCoordinates.value) {
+    clearActiveOrgan()
+    return
+  }
+
+  const stage = imageStageRef.value
+  const display = getRenderedImageRect()
+  if (!stage || !display) {
+    clearActiveOrgan()
+    return
+  }
+
+  const stageRect = stage.getBoundingClientRect()
+  const stageX = event.clientX - stageRect.left
+  const stageY = event.clientY - stageRect.top
+  const renderedX = stageX - display.left
+  const renderedY = stageY - display.top
+  if (
+    renderedX < 0 ||
+    renderedY < 0 ||
+    renderedX > display.width ||
+    renderedY > display.height
+  ) {
+    clearActiveOrgan()
+    return
+  }
+
+  const imageWidth = Number(maskCoordinates.value.image_size.width) || 0
+  const imageHeight = Number(maskCoordinates.value.image_size.height) || 0
+  if (!imageWidth || !imageHeight) {
+    clearActiveOrgan()
+    return
+  }
+
+  const imageX = (renderedX / display.width) * imageWidth
+  const imageY = (renderedY / display.height) * imageHeight
+  const organ = findOrganAtPoint(imageX, imageY)
+  if (!organ) {
+    clearActiveOrgan()
+    return
+  }
+
+  activeOrgan.value = organ
+  pointerState.value = {
+    stageX,
+    stageY,
+    stageWidth: display.stageWidth,
+    stageHeight: display.stageHeight,
+    imageX,
+    imageY,
+    displayRect: display,
+  }
+}
+
+function bboxContains(bbox, x, y) {
+  if (!bbox) return false
+  return (
+    x >= Number(bbox.x_min ?? bbox.x) &&
+    x <= Number(bbox.x_max ?? (bbox.x + bbox.width - 1)) &&
+    y >= Number(bbox.y_min ?? bbox.y) &&
+    y <= Number(bbox.y_max ?? (bbox.y + bbox.height - 1))
+  )
+}
+
+function pointInPolygon(x, y, polygon) {
+  if (!Array.isArray(polygon) || polygon.length < 3) return false
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const xi = Number(polygon[i]?.[0])
+    const yi = Number(polygon[i]?.[1])
+    const xj = Number(polygon[j]?.[0])
+    const yj = Number(polygon[j]?.[1])
+    const intersects =
+      yi > y !== yj > y &&
+      x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1) + xi
+    if (intersects) inside = !inside
+  }
+  return inside
+}
+
+function findOrganAtPoint(x, y) {
+  const organs = [...(maskCoordinates.value?.organs || [])].sort(
+    (a, b) => Number(a.area || 0) - Number(b.area || 0)
+  )
+  return organs.find((organ) => {
+    if (!bboxContains(organ.bbox, x, y)) return false
+    if (!organ.contours || organ.contours.length === 0) return true
+    return organ.contours.some((contour) => pointInPolygon(x, y, contour))
+  }) || null
 }
 
 function getBasicInfoMissingLabels() {
@@ -849,6 +1219,14 @@ async function onExportPdf() {
     exporting.value = false
   }
 }
+
+watch(currentXrayId, () => {
+  resetOverlay()
+})
+
+onUnmounted(() => {
+  resetOverlay(false)
+})
 </script>
 
 <style scoped>
@@ -1062,6 +1440,7 @@ async function onExportPdf() {
 }
 .image-wrapper {
   flex: 1;
+  position: relative;
   background: #000;
   border-radius: 4px;
   overflow: hidden;
@@ -1069,10 +1448,73 @@ async function onExportPdf() {
   align-items: center;
   justify-content: center;
 }
-.image-wrapper img {
+.image-wrapper.overlay-enabled {
+  cursor: crosshair;
+}
+.xray-image,
+.mask-overlay-image {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  user-select: none;
+  pointer-events: none;
+}
+.mask-overlay-image {
+  opacity: 0.2;
+}
+.organ-hit-label {
+  position: absolute;
+  z-index: 4;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.88);
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 18px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.organ-magnifier {
+  position: absolute;
+  z-index: 5;
+  width: 204px;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.7);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.28);
+  pointer-events: none;
+}
+.magnifier-title {
+  height: 22px;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.magnifier-viewport {
+  width: 180px;
+  height: 180px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  background: #000;
+}
+.magnifier-layers {
+  position: relative;
+  transform-origin: 0 0;
+}
+.magnifier-layers img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.magnifier-mask {
+  opacity: 0.2;
 }
 .image-placeholder {
   flex: 1;
@@ -1298,6 +1740,9 @@ async function onExportPdf() {
   background: #f1f5f9;
   color: #94a3b8;
   cursor: not-allowed;
+}
+.info-input::placeholder {
+  color: #9ca3af;
 }
 .label {
   color: #6b7280;

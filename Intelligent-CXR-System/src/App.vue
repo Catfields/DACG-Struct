@@ -227,10 +227,10 @@ async function loadExamList() {
 const MOCK_REPORTS = [
   {
     patientInfo: {
-      name: '张三',
-      gender: '男',
-      age: '45岁',
-      examDate: '2026-01-06',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [
       {
@@ -244,10 +244,10 @@ const MOCK_REPORTS = [
   },
   {
     patientInfo: {
-      name: '李四',
-      gender: '女',
-      age: '52岁',
-      examDate: '2026-01-05',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [
       {
@@ -273,20 +273,20 @@ const MOCK_REPORTS = [
   },
   {
     patientInfo: {
-      name: '王五',
-      gender: '男',
-      age: '60岁',
-      examDate: '2026-01-05',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [],
     negativeFindings: ['pneumothorax'],
   },
   {
     patientInfo: {
-      name: '赵六',
-      gender: '女',
-      age: '37岁',
-      examDate: '2026-01-04',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [
       {
@@ -300,10 +300,10 @@ const MOCK_REPORTS = [
   },
   {
     patientInfo: {
-      name: '孙七',
-      gender: '男',
-      age: '68岁',
-      examDate: '2026-01-03',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [
       {
@@ -323,10 +323,10 @@ const MOCK_REPORTS = [
   },
   {
     patientInfo: {
-      name: '周八',
-      gender: '女',
-      age: '71岁',
-      examDate: '2026-01-02',
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
     },
     positiveFindings: [
       {

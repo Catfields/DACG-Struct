@@ -19,10 +19,18 @@ class SScoresEvaluator:
     S-Score: 综合得分
     """
     
-    def __init__(self, disease_list: List[str], location_mapper):
+    def __init__(
+        self,
+        disease_list: List[str],
+        location_mapper,
+        p_weight: float = 0.5,
+        d_weight: float = 0.5,
+    ):
         self.disease_list = disease_list
         self.disease_to_id = {disease: i for i, disease in enumerate(disease_list)}
         self.location_mapper = location_mapper
+        self.p_weight = float(p_weight)
+        self.d_weight = float(d_weight)
         
         # 分数计算器
         self.prob_calculator = ProbabilityScoreCalculator()
@@ -77,7 +85,12 @@ class SScoresEvaluator:
         avg_p_score = np.mean(p_scores)
         avg_d_score = np.mean(d_scores)
         avg_d_score_oracle = np.mean(d_scores_oracle) if d_scores_oracle else 0.0
-        avg_s_score = self.compute_s_score(avg_p_score, avg_d_score)
+        avg_s_score = self.compute_s_score(
+            avg_p_score,
+            avg_d_score,
+            weight_p=self.p_weight,
+            weight_d=self.d_weight,
+        )
         
         return {
             'P-Score': avg_p_score,

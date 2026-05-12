@@ -141,8 +141,22 @@ export async function fetchXrayMaskBlob(xrayId) {
   return requestBlob(`/xray/${xrayId}/mask`)
 }
 
+export async function fetchXrayMaskCoordinates(xrayId) {
+  return requestJson(`/xray/${xrayId}/mask-coordinates`)
+}
+
 export async function fetchXrayOriginalBlob(xrayId) {
   return requestBlob(`/xray/${xrayId}/original`)
+}
+
+export async function fetchSegmentStatus(xrayId) {
+  return requestJson(`/xray/${xrayId}/segment-status`)
+}
+
+export async function triggerSegmentation(xrayId) {
+  return requestJson(`/xray/${xrayId}/segment`, {
+    method: 'POST',
+  })
 }
 
 export async function saveManualReport({

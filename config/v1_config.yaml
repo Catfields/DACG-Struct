@@ -1,0 +1,108 @@
+# ============================================================================
+# DACG v1 精简生成模型训练配置
+# - 无分区提取
+# - 无 DualAttention
+# - 无 Transformer Encoder
+# ============================================================================
+
+data:
+  name: "mimic-cxr-a"
+  data_path: "/data/home/zyx/Ir-UNet/DACG/DACG-Struct/data/mimic-cxr-a/all_structured_reports.jsonl"
+  data_format: "auto"
+  image_dir: "/data/home/zyx/Ir-UNet/DACG/DACG-Struct/data/mimic-cxr-a/images"
+  mask_dir: null
+  split_dir: "/data/home/zyx/Ir-UNet/DACG/DACG-Struct/data/mimic-cxr-a"
+  no_finding_downsample_ratio: 0.225
+
+model:
+  architecture: "v1"
+  visual_extractor: "resnet34"
+  visual_feat_dim: 512
+  visual_extractor_pretrained: false
+  d_model: 256
+  num_regions: 0
+  num_diseases: 16
+  disease_json_path: "/data/home/zyx/Ir-UNet/DACG/DACG-Struct/data/mimic-cxr-a/disease_location_candidates.json"
+
+  # v1 不使用 Transformer Encoder；这些值仅复用为 StructuredDecoder 参数。
+  vfused_encoder:
+    layers: 1
+    heads: 4
+    d_ff: 1024
+    dropout: 0.1
+
+  dropout: 0.1
+
+training:
+  batch_size: 8
+  num_epochs: 20
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  warmup_epochs: 0
+  max_grad_norm: 1.0
+  optimizer: "adamw"
+  scheduler: "cosine_annealing_warm_restarts"
+  num_workers: 0
+  pin_memory: true
+  drop_last: false
+  eval_interval: 1
+  log_interval: 20
+
+loss:
+  weights:
+    mention_loss: 1.0
+    polarity_loss: 1.0
+    probability_loss: 0.0
+    severity_loss: 0.0
+    location_loss: 1.0
+  focal:
+    alpha: 0.75
+    gamma: 2.0
+    eps: 1e-6
+  clip_grad_norm: 1.0
+  use_amp: false
+  polarity_class_weights: [1.0, 1.0]
+
+s_score:
+  enabled: false
+  interval: 1
+  threshold: 0.15
+  save_best: false
+  weights:
+    p_weight: 0.5
+    d_weight: 0.5
+
+experiment:
+  name: "dacg_v1_mimic"
+  description: "DACG v1 lean structured generation model on MIMIC-CXR-A"
+  mode: "normal"
+  seed: 42
+  resume: null
+  test_after_train: true
+  save:
+    dir: "./checkpoints_v1"
+    interval: 5
+    best_metric: "loss"
+    keep_latest: true
+    keep_best: true
+  logging:
+    dir: "./logs_v1"
+    level: "INFO"
+    save_history: true
+    tensorboard: false
+  early_stopping:
+    enabled: true
+    patience: 8
+    min_delta: 1e-4
+    monitor: "loss"
+
+environment:
+  device: "auto"
+  mixed_precision: true
+  deterministic: false
+  memory:
+    gradient_checkpointing: false
+    find_unused_parameters: false
+  multi_gpu:
+    enabled: false
+    strategy: "ddp"

@@ -13,8 +13,16 @@ def build_backbone(name: str, pretrained: bool) -> nn.Module:
     # 兼容 torchvision 新版本：pretrained -> weights
     try:
         if pretrained:
-            # 例如 ResNet50_Weights.DEFAULT
-            weights_enum = getattr(models, f"{name.split('_')[0].capitalize()}{name.split('_')[1]}_Weights", None)
+            # 将模型名转换为 Weights 枚举类名，例如：
+            #   resnet101 -> ResNet101_Weights
+            #   resnet50  -> ResNet50_Weights
+            #   densenet121 -> DenseNet121_Weights
+            import re
+            # 在字母和数字边界处插入下划线，然后按 _ 拆分
+            parts = re.sub(r'([a-zA-Z])(\d)', r'\1_\2', name).split('_')
+            # 每个部分首字母大写，其余小写
+            class_name = ''.join(p.capitalize() for p in parts)
+            weights_enum = getattr(models, f"{class_name}_Weights", None)
             weights = weights_enum.DEFAULT if weights_enum is not None else "DEFAULT"
         else:
             weights = None

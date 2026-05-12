@@ -18,9 +18,10 @@ import time
 from pathlib import Path
 
 # 导入模型和损失函数
-from project.model import DACGModel, DACGModelConfig
+from project.model import DACGModel
 from modules.structured_loss import compute_structured_loss
 from modules.s_score_evaluator import SScoresEvaluator
+from dataloader.dataloader import build_label_maps_from_candidates
 
 
 @dataclass
@@ -38,7 +39,8 @@ class TrainerConfig:
         'polarity_loss': 1.0,
         'probability_loss': 1.0,
         'severity_loss': 1.0,
-        'location_loss': 1.0
+        'modifier_loss': 1.0,
+        'anatomy_loss': 1.0
     })
     
     # 训练控制
@@ -56,6 +58,9 @@ class TrainerConfig:
     device: str = 'cuda' if torch.cuda.is_available() else 'cpu'
     use_amp: bool = True
     num_workers: int = 4
+    max_train_batches: Optional[int] = None
+    max_val_batches: Optional[int] = None
+    max_test_batches: Optional[int] = None
     
     # S-Score评估配置
     enable_s_score: bool = True              # 是否启用S-Score评估
@@ -70,6 +75,9 @@ class TrainerConfig:
     # 早停
     patience: int = 10
     min_delta: float = 1e-4
+
+    # Class weights for polarity BCE: [w_negative, w_positive]
+    polarity_class_weights: Optional[List[float]] = None
 
 
 class DACGTrainer:
@@ -112,17 +120,26 @@ class DACGTrainer:
         self.disease_list = disease_list
         
         # 设备管理
-        self.device = torch.device(config.device)
+        self.device = self._resolve_device(config.device)
         self.model.to(self.device)
         
         # 构建映射字典
         self.severity_to_id = self._build_severity_mapping()
         self.location_to_id = self._build_location_mapping()
+        self.disease_modifier_to_id, self.disease_anatomy_to_id = self._build_location_label_maps()
         
         # 优化器和调度器
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
-        
+
+        # Polarity class weights for BCE (e.g. [1.0, 3.0] for imbalanced data)
+        self.polarity_class_weights = None
+        if config.polarity_class_weights is not None:
+            self.polarity_class_weights = torch.tensor(
+                config.polarity_class_weights, dtype=torch.float32, device=self.device
+            )
+            print(f"Polarity class weights: {config.polarity_class_weights}")
+
         # 混合精度训练
         self.use_amp = config.use_amp and self.device.type == 'cuda'
         self.scaler = GradScaler() if self.use_amp else None
@@ -135,10 +152,18 @@ class DACGTrainer:
         # S-Score评估器
         self.s_score_evaluator = None
         if config.enable_s_score:
-            self.s_score_evaluator = SScoresEvaluator(
-                disease_list=self.disease_list,
-                location_mapper=self._create_location_mapper()
-            )
+            try:
+                p_weight = float(config.s_score_weights.get("p_weight", 0.5))
+                d_weight = float(config.s_score_weights.get("d_weight", 0.5))
+                self.s_score_evaluator = SScoresEvaluator(
+                    disease_list=self.disease_list,
+                    location_mapper=self._create_location_mapper(),
+                    p_weight=p_weight,
+                    d_weight=d_weight,
+                )
+            except Exception as e:
+                print(f"Warning: 初始化 S-Score 评估器失败，已禁用。错误: {e}")
+                self.s_score_evaluator = None
         
         # S-Score历史记录
         self.best_s_score = 0.0
@@ -162,8 +187,15 @@ class DACGTrainer:
         print(f"疾病数量: {len(self.disease_list)}")
     
     def _build_severity_mapping(self) -> Dict[str, int]:
-        """构建严重程度映射字典"""
+        """
+        构建严重程度映射字典
+        注意：数据中 severity 是 int (0-3)，所以 int key 也需要包含
+        """
         return {
+            # int keys (主要)
+            0: 0, 1: 1, 2: 2, 3: 3,
+            # string keys (兼容)
+            '0': 0, '1': 1, '2': 2, '3': 3,
             'None': 0, 'none': 0, '': 0,
             'Mild': 1, 'mild': 1,
             'Moderate': 2, 'moderate': 2,
@@ -199,6 +231,29 @@ class DACGTrainer:
                 return self.location_map.get(location_id, 'None')
         
         return SimpleLocationMapper()
+
+    def _resolve_device(self, device: str) -> torch.device:
+        if device == "auto":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return torch.device(device)
+
+    def _build_location_label_maps(self) -> Tuple[Dict[str, Dict[str, int]], Dict[str, Dict[str, int]]]:
+        """
+        训练损失需要 disease_modifier_to_id / disease_anatomy_to_id。
+        优先尝试从数据目录自动构建；失败时回退为空映射。
+        """
+        try:
+            severity_to_id, disease_modifier_to_id, disease_anatomy_to_id = build_label_maps_from_candidates(
+                split_dir="data/mimic-cxr-a",
+                disease_list=self.disease_list,
+            )
+            # 与 self.severity_to_id 兼容合并
+            self.severity_to_id.update(severity_to_id)
+            return disease_modifier_to_id, disease_anatomy_to_id
+        except Exception as e:
+            print(f"Warning: 无法自动构建 location label maps，将使用空映射。错误: {e}")
+            empty = {d: {} for d in self.disease_list}
+            return empty, empty
     
     def _build_optimizer(self) -> optim.Optimizer:
         """构建优化器"""
@@ -265,6 +320,61 @@ class DACGTrainer:
             })
         
         return batch_labels
+
+    def _convert_batch_labels_to_s_score_targets(self, batch_labels: List[Dict]) -> List[Dict]:
+        """
+        将 dataloader 原始 batch_labels 转为 S-Score 评估器使用格式。
+        """
+        converted = []
+        for sample in batch_labels:
+            positive_findings = sample.get("positive_findings", []) or []
+            negative_findings = sample.get("negative_findings", []) or []
+
+            positive_diseases = []
+            disease_details = {}
+            for finding in positive_findings:
+                if not isinstance(finding, dict):
+                    continue
+                disease_name = finding.get("disease_name") or finding.get("disease")
+                if not disease_name:
+                    continue
+                positive_diseases.append(disease_name)
+
+                details = {}
+                if finding.get("probability") is not None:
+                    try:
+                        details["probability"] = int(finding.get("probability"))
+                    except Exception:
+                        pass
+                if finding.get("severity") is not None:
+                    sev = finding.get("severity")
+                    if isinstance(sev, str):
+                        details["severity"] = int(self.severity_to_id.get(sev, self.severity_to_id.get(sev.lower(), 0)))
+                    else:
+                        try:
+                            details["severity"] = int(sev)
+                        except Exception:
+                            pass
+                if finding.get("location") is not None:
+                    loc = finding.get("location")
+                    if isinstance(loc, str):
+                        details["location"] = int(self.location_to_id.get(loc, self.location_to_id.get(loc.lower(), 0)))
+                    else:
+                        try:
+                            details["location"] = int(loc)
+                        except Exception:
+                            pass
+                if details:
+                    disease_details[disease_name] = details
+
+            converted.append(
+                {
+                    "positive_diseases": positive_diseases,
+                    "negative_diseases": negative_findings,
+                    "disease_details": disease_details,
+                }
+            )
+        return converted
     
     def _id_to_severity(self, severity_id: int) -> str:
         """将严重程度ID转换为字符串"""
@@ -290,22 +400,35 @@ class DACGTrainer:
             # 将非有限值替换为有限数以防损失出现nan/inf
             return torch.nan_to_num(t, nan=0.0, posinf=50.0, neginf=-50.0)
 
+        mention_logits = _safe(outputs["mention_logits"])
+        polarity_logits = _safe(outputs["polarity_logits"])
+        probability_logits = _safe(outputs["probability_logits"])
+        severity_logits = _safe(outputs["severity_logits"])
+        modifier_logits = _safe(outputs["modifier_logits"])
+        anatomy_logits = _safe(outputs["anatomy_logits"])
+
         return {
-            # 原始logits（供loss使用）
-            'mention_logits': _safe(outputs['disease_logits']),               # (B, Q)
-            'polarity_logits': _safe(outputs['polarity_logits']),             # (B, Q, 2)
-            'prob_logits': _safe(outputs['probability_logits']),              # (B, Q, 3)
-            'sev_logits': _safe(outputs['severity_logits']),                  # (B, Q, 4)
-            'loc_logits': _safe(outputs['location_logits']),                  # (B, Q, 50)
-            
-            # S-Score评估需要的格式
-            'disease_mentions': outputs['disease_mentions'],          # (B, Q, 1)
-            'disease_probability': outputs['disease_probability'],      # (B, Q, 3)
-            'disease_severity': outputs['disease_severity'],          # (B, Q, 4)
-            'location_probs': outputs['location_probs']                 # (B, Q, 50)
+            # 损失计算所需
+            "mention_logits": mention_logits,
+            "polarity_logits": polarity_logits,
+            "probability_logits": probability_logits,
+            "severity_logits": severity_logits,
+            "modifier_logits": modifier_logits,
+            "anatomy_logits": anatomy_logits,
+
+            # S-Score 兼容键
+            "mention_probs": outputs.get("mention_probs", torch.sigmoid(mention_logits)),
+            "prob_logits": probability_logits,
+            "sev_logits": severity_logits,
+            "loc_logits": anatomy_logits,
         }
     
-    def _prepare_masks(self, mask_images: Optional[torch.Tensor], batch_size: int) -> torch.Tensor:
+    def _prepare_masks(
+        self,
+        mask_images: Optional[torch.Tensor],
+        batch_size: int,
+        target_hw: Optional[Tuple[int, int]] = None,
+    ) -> torch.Tensor:
         """
         准备掩膜张量
         
@@ -316,7 +439,10 @@ class DACGTrainer:
         Returns:
             masks: 4通道掩膜张量 (B, 4, H, W)
         """
-        height, width = 224, 224  # 默认尺寸
+        if target_hw is None:
+            height, width = 224, 224  # 默认尺寸
+        else:
+            height, width = int(target_hw[0]), int(target_hw[1])
         
         if mask_images is None:
             # 创建零掩膜
@@ -324,6 +450,14 @@ class DACGTrainer:
         else:
             # 确保mask_images在正确的设备上
             mask_images = mask_images.to(self.device)
+
+            # 对齐到当前图像分辨率（避免 256->224 等尺寸不一致）
+            if mask_images.shape[-2:] != (height, width):
+                mask_images = torch.nn.functional.interpolate(
+                    mask_images.float(),
+                    size=(height, width),
+                    mode="nearest",
+                )
             
             # 将单通道掩膜转换为4通道
             masks = torch.zeros(batch_size, 4, height, width, device=self.device)
@@ -342,6 +476,10 @@ class DACGTrainer:
                         elif i == 2:  # 心脏
                             masks[:, i, h//3:2*h//3, w//3:2*w//3] = 1.0
                         # i=3 是背景，保持为0
+                elif mask_images.size(1) == 3:  # 左肺/右肺/心脏 -> 补背景通道
+                    masks[:, :3, :, :] = mask_images
+                    foreground = torch.clamp(mask_images.sum(dim=1, keepdim=True), 0.0, 1.0)
+                    masks[:, 3:4, :, :] = 1.0 - foreground
                 elif mask_images.size(1) >= 4:  # 已经有4个通道
                     masks = mask_images[:, :4, :, :]
             
@@ -349,11 +487,23 @@ class DACGTrainer:
     
     def _compute_weighted_loss(self, loss_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
         """计算加权总损失"""
-        total_loss = 0.0
+        first_tensor = next(iter(loss_dict.values()))
+        total_loss = torch.tensor(0.0, device=first_tensor.device, requires_grad=True)
+
+        weights = dict(self.config.loss_weights)
+        # 兼容旧配置 location_loss
+        if "location_loss" in weights:
+            weights.setdefault("modifier_loss", weights["location_loss"])
+            weights.setdefault("anatomy_loss", weights["location_loss"])
+
         for loss_name, loss_value in loss_dict.items():
-            if loss_name in self.config.loss_weights:
-                weight = self.config.loss_weights[loss_name]
-                total_loss += weight * loss_value
+            if loss_name == "total_loss":
+                continue
+            if loss_name in weights:
+                total_loss = total_loss + weights[loss_name] * loss_value
+
+        if total_loss.item() == 0.0 and "total_loss" in loss_dict:
+            return loss_dict["total_loss"]
         return total_loss
     
     def train_epoch(self) -> Dict[str, float]:
@@ -370,44 +520,52 @@ class DACGTrainer:
             'polarity_loss': 0.0,
             'probability_loss': 0.0,
             'severity_loss': 0.0,
-            'location_loss': 0.0
+            'modifier_loss': 0.0,
+            'anatomy_loss': 0.0,
         }
         
         num_batches = len(self.train_loader)
+        processed_batches = 0
         
         for batch_idx, batch in enumerate(self.train_loader):
             # 获取数据 - 处理不同的数据格式
             if isinstance(batch, dict):
                 # 标准dataloader格式
                 images = batch['images'].to(self.device)
-                targets = batch['targets']
+                labels = batch.get('labels') or batch.get('targets')
                 mask_images = batch.get('mask_images')
             else:
-    # TensorDataset格式 (用于测试)
+                # TensorDataset格式 (用于测试)
                 images = batch[0].to(self.device)
-                targets = batch[1]  # targets 在 batch[1]
+                labels = batch[1] if len(batch) > 1 else None
                 mask_images = batch[3] if len(batch) > 3 else None  # mask_image 在 batch[3]
-            
-            # 创建虚拟targets（如果需要）
-            if targets is None:
-                targets = {
-                    'disease_labels': torch.zeros(images.size(0), len(self.disease_list)),
-                    'disease_details': [[] for _ in range(images.size(0))],
-                    'negative_diseases': [[] for _ in range(images.size(0))],
-                    'probability_scores': torch.zeros(images.size(0), len(self.disease_list)),
-                    'severity_scores': torch.zeros(images.size(0), len(self.disease_list)),
-                    'location_ids': torch.zeros(images.size(0), len(self.disease_list)),
-                    'num_findings': torch.zeros(images.size(0))
+
+            # 创建虚拟 labels（如果需要）
+            if labels is None:
+                bsz = images.size(0)
+                k = len(self.disease_list)
+                zeros_float = torch.zeros(bsz, k)
+                zeros_long = torch.zeros(bsz, k, dtype=torch.long)
+                zeros_mask = torch.zeros(bsz, k, dtype=torch.bool)
+                labels = {
+                    "mention_labels": zeros_float.clone(),
+                    "polarity_labels": zeros_float.clone(),
+                    "prob_labels": zeros_long.clone(),
+                    "sev_labels": zeros_long.clone(),
+                    "modifier_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                    "anatomy_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                    "mask_pol": zeros_mask.clone(),
+                    "mask_prob": zeros_mask.clone(),
+                    "mask_sev": zeros_mask.clone(),
+                    "mask_mod": zeros_mask.clone(),
+                    "mask_anat": zeros_mask.clone(),
                 }
             
             if mask_images is not None:
                 mask_images = mask_images.to(self.device)
                 
             # 准备掩膜
-            masks = self._prepare_masks(mask_images, images.size(0))
-                
-            # 数据格式转换
-            batch_labels = self._convert_targets_to_batch_labels(targets)
+            masks = self._prepare_masks(mask_images, images.size(0), images.shape[-2:])
                 
             # 前向传播
             with autocast(enabled=self.use_amp):
@@ -416,16 +574,20 @@ class DACGTrainer:
                 
                 # 计算损失
                 loss_dict = compute_structured_loss(
-                    loss_outputs, batch_labels,
-                    self.disease_list, self.severity_to_id, self.location_to_id
+                    loss_outputs,
+                    labels,
+                    self.disease_list,
+                    self.severity_to_id,
+                    self.disease_modifier_to_id,
+                    self.disease_anatomy_to_id,
+                    polarity_class_weights=self.polarity_class_weights,
                 )
                 
                 # 应用权重
                 weighted_total_loss = self._compute_weighted_loss(loss_dict)
                 loss_dict['total_loss'] = weighted_total_loss
                 
-                # 确保损失张量有梯度（修复梯度问题）
-                weighted_total_loss = weighted_total_loss.requires_grad_(True)
+                
             
             #每个 batch 开始就清梯度（比 step 后再清更标准）
             self.optimizer.zero_grad(set_to_none=True)
@@ -476,6 +638,7 @@ class DACGTrainer:
             for key in epoch_losses:
                 if key in loss_dict:
                     epoch_losses[key] += loss_dict[key].item()
+            processed_batches += 1
             
             # 日志记录
             if batch_idx % self.config.log_interval == 0:
@@ -484,14 +647,18 @@ class DACGTrainer:
                       f"Batch [{batch_idx}/{num_batches}] "
                       f"Loss: {weighted_total_loss.item():.4f} "
                       f"LR: {current_lr:.6f}")
+
+            if self.config.max_train_batches and processed_batches >= self.config.max_train_batches:
+                break
         
         # 计算平均损失
+        denom = max(1, processed_batches)
         for key in epoch_losses:
-            epoch_losses[key] /= num_batches
+            epoch_losses[key] /= denom
         
         return epoch_losses
     
-    def validate(self) -> Dict[str, float]:
+    def validate(self, compute_s_score: bool = True) -> Dict[str, float]:
         """
         验证模型 - 同时计算损失和S-Score
         
@@ -507,7 +674,8 @@ class DACGTrainer:
             'polarity_loss': 0.0,
             'probability_loss': 0.0,
             'severity_loss': 0.0,
-            'location_loss': 0.0
+            'modifier_loss': 0.0,
+            'anatomy_loss': 0.0,
         }
         
         # S-Score数据收集
@@ -515,6 +683,7 @@ class DACGTrainer:
         all_targets = []
         
         num_batches = len(self.val_loader)
+        processed_batches = 0
         
         with torch.no_grad():
             for batch in self.val_loader:
@@ -522,32 +691,50 @@ class DACGTrainer:
                 if isinstance(batch, dict):
                     # 标准dataloader格式
                     images = batch['images'].to(self.device)
-                    targets = batch['targets']
+                    labels = batch.get('labels') or batch.get('targets')
+                    batch_labels_raw = batch.get('batch_labels')
                     mask_images = batch.get('mask_images')
                 else:
                     # TensorDataset格式 (用于测试)
                     images = batch[0].to(self.device)
-                    masks = batch[1].to(self.device)
-                    # 创建虚拟targets
-                    targets = {
-                        'disease_labels': torch.zeros(images.size(0), len(self.disease_list)),
-                        'disease_details': [[] for _ in range(images.size(0))],
-                        'negative_diseases': [[] for _ in range(images.size(0))],
-                        'probability_scores': torch.zeros(images.size(0), len(self.disease_list)),
-                        'severity_scores': torch.zeros(images.size(0), len(self.disease_list)),
-                        'location_ids': torch.zeros(images.size(0), len(self.disease_list)),
-                        'num_findings': torch.zeros(images.size(0))
-                    }
-                    mask_images = None
+                    labels = batch[1] if len(batch) > 1 else None
+                    batch_labels_raw = None
+                    if labels is None:
+                        bsz = images.size(0)
+                        k = len(self.disease_list)
+                        zeros_float = torch.zeros(bsz, k)
+                        zeros_long = torch.zeros(bsz, k, dtype=torch.long)
+                        zeros_mask = torch.zeros(bsz, k, dtype=torch.bool)
+                        labels = {
+                            "mention_labels": zeros_float.clone(),
+                            "polarity_labels": zeros_float.clone(),
+                            "prob_labels": zeros_long.clone(),
+                            "sev_labels": zeros_long.clone(),
+                            "modifier_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                            "anatomy_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                            "mask_pol": zeros_mask.clone(),
+                            "mask_prob": zeros_mask.clone(),
+                            "mask_sev": zeros_mask.clone(),
+                            "mask_mod": zeros_mask.clone(),
+                            "mask_anat": zeros_mask.clone(),
+                        }
+                    if isinstance(batch, (tuple, list)) and len(batch) > 2 and isinstance(batch[2], list):
+                        batch_labels_raw = batch[2]
+                    else:
+                        batch_labels_raw = [
+                            {"positive_findings": [], "negative_findings": []}
+                            for _ in range(images.size(0))
+                        ]
+                    if len(batch) > 2 and torch.is_tensor(batch[2]):
+                        mask_images = batch[2]
+                    else:
+                        mask_images = None
                 
                 if mask_images is not None:
                     mask_images = mask_images.to(self.device)
                 
                 # 准备掩膜
-                masks = self._prepare_masks(mask_images, images.size(0))
-                
-                # 数据格式转换
-                batch_labels = self._convert_targets_to_batch_labels(targets)
+                masks = self._prepare_masks(mask_images, images.size(0), images.shape[-2:])
                 
                 # 前向传播
                 with autocast(enabled=self.use_amp):
@@ -556,8 +743,13 @@ class DACGTrainer:
                     
                     # 计算损失
                     loss_dict = compute_structured_loss(
-                        loss_outputs, batch_labels,
-                        self.disease_list, self.severity_to_id, self.location_to_id
+                        loss_outputs,
+                        labels,
+                        self.disease_list,
+                        self.severity_to_id,
+                        self.disease_modifier_to_id,
+                        self.disease_anatomy_to_id,
+                        polarity_class_weights=self.polarity_class_weights,
                     )
                     
                     # 应用权重
@@ -568,19 +760,32 @@ class DACGTrainer:
                 for key in val_losses:
                     if key in loss_dict:
                         val_losses[key] += loss_dict[key].item()
+                processed_batches += 1
                 
                 # 收集预测和目标用于S-Score计算
-                if self.s_score_evaluator is not None:
+                if self.s_score_evaluator is not None and compute_s_score:
                     # 保存模型输出和目标
-                    all_predictions.append(outputs)
-                    all_targets.extend(batch_labels)
+                    all_predictions.append(loss_outputs)
+                    if batch_labels_raw is not None:
+                        all_targets.extend(
+                            self._convert_batch_labels_to_s_score_targets(batch_labels_raw)
+                        )
+
+                if self.config.max_val_batches and processed_batches >= self.config.max_val_batches:
+                    break
         
         # 计算平均损失
+        denom = max(1, processed_batches)
         for key in val_losses:
-            val_losses[key] /= num_batches
+            val_losses[key] /= denom
         
         # 计算S-Score（如果启用）
-        if self.s_score_evaluator is not None and all_predictions:
+        if (
+            self.s_score_evaluator is not None
+            and compute_s_score
+            and all_predictions
+            and all_targets
+        ):
             s_score_results = self._compute_s_score_metrics(
                 all_predictions, all_targets
             )
@@ -616,10 +821,10 @@ class DACGTrainer:
         合并批次预测结果
         """
         merged = {
-            'disease_mentions': [],
-            'disease_probability': [],
-            'disease_severity': [],
-            'location_probs': []
+            'mention_probs': [],
+            'prob_logits': [],
+            'sev_logits': [],
+            'loc_logits': []
         }
         
         for batch_pred in all_predictions:
@@ -753,7 +958,9 @@ class DACGTrainer:
             
             # 验证
             if (epoch + 1) % self.config.eval_interval == 0:
-                val_metrics = self.validate()
+                s_interval = max(1, int(self.config.s_score_interval))
+                should_compute_s_score = ((epoch + 1) % s_interval == 0)
+                val_metrics = self.validate(compute_s_score=should_compute_s_score)
                 
                 # 更新学习率
                 self.scheduler.step()
@@ -819,25 +1026,44 @@ class DACGTrainer:
             'polarity_loss': 0.0,
             'probability_loss': 0.0,
             'severity_loss': 0.0,
-            'location_loss': 0.0
+            'modifier_loss': 0.0,
+            'anatomy_loss': 0.0,
         }
         
         num_batches = len(self.test_loader)
+        processed_batches = 0
         
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.test_loader):
                 images = batch['images'].to(self.device)
-                targets = batch['targets']
+                labels = batch.get('labels') or batch.get('targets')
                 mask_images = batch.get('mask_images')
+
+                if labels is None:
+                    bsz = images.size(0)
+                    k = len(self.disease_list)
+                    zeros_float = torch.zeros(bsz, k)
+                    zeros_long = torch.zeros(bsz, k, dtype=torch.long)
+                    zeros_mask = torch.zeros(bsz, k, dtype=torch.bool)
+                    labels = {
+                        "mention_labels": zeros_float.clone(),
+                        "polarity_labels": zeros_float.clone(),
+                        "prob_labels": zeros_long.clone(),
+                        "sev_labels": zeros_long.clone(),
+                        "modifier_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                        "anatomy_labels": torch.full((bsz, k), -100, dtype=torch.long),
+                        "mask_pol": zeros_mask.clone(),
+                        "mask_prob": zeros_mask.clone(),
+                        "mask_sev": zeros_mask.clone(),
+                        "mask_mod": zeros_mask.clone(),
+                        "mask_anat": zeros_mask.clone(),
+                    }
                 
                 if mask_images is not None:
                     mask_images = mask_images.to(self.device)
                 
                 # 准备掩膜
-                masks = self._prepare_masks(mask_images, images.size(0))
-                
-                # 数据格式转换
-                batch_labels = self._convert_targets_to_batch_labels(targets)
+                masks = self._prepare_masks(mask_images, images.size(0), images.shape[-2:])
                 
                 # 前向传播
                 with autocast(enabled=self.use_amp):
@@ -846,8 +1072,13 @@ class DACGTrainer:
                     
                     # 计算损失
                     loss_dict = compute_structured_loss(
-                        loss_outputs, batch_labels,
-                        self.disease_list, self.severity_to_id, self.location_to_id
+                        loss_outputs,
+                        labels,
+                        self.disease_list,
+                        self.severity_to_id,
+                        self.disease_modifier_to_id,
+                        self.disease_anatomy_to_id,
+                        polarity_class_weights=self.polarity_class_weights,
                     )
                     
                     # 应用权重
@@ -858,13 +1089,18 @@ class DACGTrainer:
                 for key in test_losses:
                     if key in loss_dict:
                         test_losses[key] += loss_dict[key].item()
+                processed_batches += 1
                 
                 if batch_idx % 50 == 0:
                     print(f"测试批次 [{batch_idx}/{num_batches}]")
+
+                if self.config.max_test_batches and processed_batches >= self.config.max_test_batches:
+                    break
         
         # 计算平均损失
+        denom = max(1, processed_batches)
         for key in test_losses:
-            test_losses[key] /= num_batches
+            test_losses[key] /= denom
         
         print("\n测试结果:")
         for key, value in test_losses.items():

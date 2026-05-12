@@ -7,12 +7,33 @@ from app.core.exceptions import AuthException
 
 
 def authenticate_user(db: Session, login_name: str, password: str, expected_role_name: str) -> tuple[User, str]:
-    """Validate user credentials and return user and role_name."""
-    stmt = select(User, Role.role_name).join(Role, Role.role_id == User.role_id, isouter=True).where(User.login_name == login_name)
+    """Validate user credentials and return user and role_name.
+    
+    Supports login with either username (login_name) or phone number.
+    If logging in with phone, the user must have a phone number set.
+    """
+    from sqlalchemy import or_
+    
+    # Try to find user by login_name or phone
+    stmt = select(User, Role.role_name).join(
+        Role, Role.role_id == User.role_id, isouter=True
+    ).where(
+        or_(User.login_name == login_name, User.phone == login_name)
+    )
     row = db.execute(stmt).first()
+    
     if not row:
         raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
+    
     user, role_name = row
+    
+    # If logging in with phone (login_name matches phone but not login_name),
+    # verify the user actually has a phone number set
+    if user.login_name != login_name and user.phone == login_name:
+        # Logging in with phone - verify phone is set
+        if not user.phone:
+            raise AuthException("INVALID_CREDENTIALS", "用户名或密码错误", status_code=401)
+    
     if not role_name:
         raise AuthException("ROLE_NOT_FOUND", "用户角色缺失", status_code=403)
     if expected_role_name and role_name != expected_role_name:

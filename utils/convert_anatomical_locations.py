@@ -38,7 +38,6 @@ DISEASE_NAME_MAP = {
     'tortuosity of the thoracic aorta': 'tortuosity_of_the_thoracic_aorta',
     'enlarged cardiomediastinum': 'enlarged_cardiomediastinum',
     'no finding': 'no_finding',
-    'support devices': 'support_devices',
 }
 
 # 同义词映射（从之前的结果加载）

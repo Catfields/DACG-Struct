@@ -2,6 +2,7 @@
 .codex/
 .vscode/
 .zed/
+./github
 data/
 my_ml_app/models/
 graph/
@@ -16,6 +17,8 @@ __pycache__/
 backend/ml_models/seg_models/*
 backend/storage/*
 CLAUDE.md
-checkpoints/
 Agent.md
 backend/ml_models/*
+checkpoints/
+checkpoints_v1/
+checkpoints_multilabel/

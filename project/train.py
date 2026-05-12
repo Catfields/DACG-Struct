@@ -4,6 +4,8 @@ DACG模型训练入口脚本
 支持命令行参数和配置文件
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -15,14 +17,11 @@ import random
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import torch
 # 导入核心模块
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from project.model import DACGModel, DACGModelConfig
-from project.trainer import create_trainer, TrainerConfig
-from dataloader.dataloader import create_mimic_cxr_data_loaders
 
 
 def parse_args():
@@ -191,6 +190,7 @@ def auto_detect_disease_count(data_path: str, data_format: str = 'auto') -> int:
 
 def create_model_config(args: Dict) -> DACGModelConfig:
     """从合并后的参数创建模型配置"""
+    from project.model import DACGModelConfig
 
     # 调试输出：验证vfused_encoder配置
     vfused_encoder_config = args.get('model', {}).get('vfused_encoder', {})
@@ -212,7 +212,7 @@ def create_model_config(args: Dict) -> DACGModelConfig:
     return DACGModelConfig(
         visual_extractor=args.get('model', {}).get('visual_extractor', 'resnet101'),
         visual_feat_dim=args.get('model', {}).get('visual_feat_dim', 2048),
-        visual_extractor_pretrained=args.get('model', {}).get('visual_extractor_pretrained', True),
+        visual_extractor_pretrained=args.get('model', {}).get('visual_extractor_pretrained', False),
         d_model=args.get('model', {}).get('d_model', 512),
         num_regions=args.get('model', {}).get('num_regions', 4),
         vfused_encoder_layers=vfused_layers,
@@ -225,12 +225,35 @@ def create_model_config(args: Dict) -> DACGModelConfig:
         device=args.get('environment', {}).get('device', 'auto'),
         # 新增：disease-specific 参数
         disease_vocab_sizes=disease_vocab_sizes,
-        disease_order=args.get('model', {}).get('disease_order')
+        disease_order=args.get('model', {}).get('disease_order'),
+        disease_json_path=args.get('model', {}).get(
+            'disease_json_path',
+            os.path.join(
+                args.get('data', {}).get('split_dir', 'data/mimic-cxr-a'),
+                'disease_location_candidates.json'
+            )
+        ),
     )
 
 
 def create_trainer_config(args: Dict) -> TrainerConfig:
     """创建训练器配置"""
+    from project.trainer import TrainerConfig
+
+    loss_weights = args.get('loss', {}).get('weights', {
+        'mention_loss': 1.0,
+        'polarity_loss': 1.0,
+        'probability_loss': 1.0,
+        'severity_loss': 1.0,
+        'modifier_loss': 1.0,
+        'anatomy_loss': 1.0,
+    })
+
+    # 兼容旧配置键 location_loss
+    if 'location_loss' in loss_weights:
+        loss_weights.setdefault('modifier_loss', loss_weights['location_loss'])
+        loss_weights.setdefault('anatomy_loss', loss_weights['location_loss'])
+
     return TrainerConfig(
         learning_rate=float(args.get('training', {}).get('learning_rate', '1e-4')),
         weight_decay=float(args.get('training', {}).get('weight_decay', '1e-5')),
@@ -238,13 +261,7 @@ def create_trainer_config(args: Dict) -> TrainerConfig:
         max_grad_norm=args.get('training', {}).get('max_grad_norm', 1.0),
         
         # 损失权重
-        loss_weights=args.get('loss', {}).get('weights', {
-            'mention_loss': 1.0,
-            'polarity_loss': 1.0,
-            'probability_loss': 1.0,
-            'severity_loss': 1.0,
-            'location_loss': 1.0
-        }),
+        loss_weights=loss_weights,
         
         # 训练控制
         num_epochs=args.get('training', {}).get('num_epochs', 100),
@@ -261,6 +278,9 @@ def create_trainer_config(args: Dict) -> TrainerConfig:
         device=args.get('environment', {}).get('device', 'auto'),
         use_amp=args.get('environment', {}).get('mixed_precision', True),
         num_workers=args.get('training', {}).get('num_workers', 4),
+        max_train_batches=args.get('training', {}).get('max_train_batches'),
+        max_val_batches=args.get('training', {}).get('max_val_batches'),
+        max_test_batches=args.get('training', {}).get('max_test_batches'),
         
         # S-Score评估配置
         enable_s_score=args.get('s_score', {}).get('enabled', True),
@@ -274,8 +294,129 @@ def create_trainer_config(args: Dict) -> TrainerConfig:
         
         # 早停参数
         patience=int(args.get('experiment', {}).get('early_stopping', {}).get('patience', 10)),
-        min_delta=float(args.get('experiment', {}).get('early_stopping', {}).get('min_delta', 1e-4))
+        min_delta=float(args.get('experiment', {}).get('early_stopping', {}).get('min_delta', 1e-4)),
+        polarity_class_weights=args.get('loss', {}).get('polarity_class_weights'),
     )
+
+
+def create_multilabel_model_config(args: Dict, label_names) -> MultiLabelDACGModelConfig:
+    """从配置创建单任务多标签模型配置"""
+    from project.multilabel_model import MultiLabelDACGModelConfig
+
+    vfused_encoder_config = args.get('model', {}).get('vfused_encoder', {})
+    vfused_layers = vfused_encoder_config.get('layers', 1)
+
+    return MultiLabelDACGModelConfig(
+        visual_extractor=args.get('model', {}).get('visual_extractor', 'resnet101'),
+        visual_extractor_pretrained=args.get('model', {}).get('visual_extractor_pretrained', False),
+        d_model=args.get('model', {}).get('d_model', 512),
+        num_regions=args.get('model', {}).get('num_regions', 4),
+        vfused_encoder_layers=vfused_layers,
+        vfused_encoder_heads=args.get('model', {}).get('vfused_encoder', {}).get('heads', 8),
+        vfused_encoder_d_ff=args.get('model', {}).get('vfused_encoder', {}).get('d_ff', 2048),
+        vfused_encoder_dropout=args.get('model', {}).get('vfused_encoder', {}).get('dropout', 0.1),
+        dropout=args.get('model', {}).get('dropout', 0.1),
+        num_labels=len(label_names),
+        label_names=list(label_names),
+    )
+
+
+def _compute_multilabel_pos_weight(train_loader, max_value: Optional[float] = None):
+    labels = train_loader.dataset.label_matrix()
+    positives = labels.sum(dim=0)
+    negatives = labels.size(0) - positives
+    pos_weight = negatives / torch.clamp(positives, min=1.0)
+    if max_value is not None:
+        pos_weight = torch.clamp(pos_weight, max=float(max_value))
+    return [float(x) for x in pos_weight.tolist()]
+
+
+def create_multilabel_trainer_config(args: Dict, train_loader) -> MultiLabelTrainerConfig:
+    """创建单任务多标签训练器配置"""
+    from project.multilabel_trainer import MultiLabelTrainerConfig
+
+    pos_weight = args.get('loss', {}).get('pos_weight')
+    if isinstance(pos_weight, str) and pos_weight.lower() == 'auto':
+        max_pos_weight = args.get('loss', {}).get('max_pos_weight')
+        pos_weight = _compute_multilabel_pos_weight(train_loader, max_pos_weight)
+    elif pos_weight is not None:
+        pos_weight = [float(x) for x in pos_weight]
+
+    return MultiLabelTrainerConfig(
+        learning_rate=float(args.get('training', {}).get('learning_rate', '1e-4')),
+        weight_decay=float(args.get('training', {}).get('weight_decay', '1e-5')),
+        max_grad_norm=args.get('training', {}).get('max_grad_norm', 1.0),
+        num_epochs=args.get('training', {}).get('num_epochs', 100),
+        eval_interval=args.get('training', {}).get('eval_interval', 1),
+        log_interval=args.get('training', {}).get('log_interval', 50),
+        threshold=float(args.get('metrics', {}).get('threshold', 0.5)),
+        save_dir=args.get('experiment', {}).get('save', {}).get('dir', './checkpoints_multilabel'),
+        log_dir=args.get('experiment', {}).get('logging', {}).get('dir', './logs'),
+        experiment_name=args.get('experiment', {}).get('name', 'dacg_multilabel'),
+        device=args.get('environment', {}).get('device', 'auto'),
+        use_amp=args.get('environment', {}).get('mixed_precision', True),
+        patience=int(args.get('experiment', {}).get('early_stopping', {}).get('patience', 10)),
+        min_delta=float(args.get('experiment', {}).get('early_stopping', {}).get('min_delta', 1e-4)),
+        pos_weight=pos_weight,
+        loss_type=args.get('loss', {}).get('type', 'focal'),
+        focal_alpha=args.get('loss', {}).get('focal_alpha'),
+        focal_gamma=float(args.get('loss', {}).get('focal_gamma', 2.0)),
+        logit_clip=float(args.get('loss', {}).get('logit_clip', 20.0)),
+        progress_bar=bool(args.get('training', {}).get('progress_bar', True)),
+    )
+
+
+def main_multilabel(merged_config: Dict, config_path: str, logger: logging.Logger):
+    """单任务多标签训练流程"""
+    from dataloader.multilabel_dataloader import create_mimic_cxr_multilabel_data_loaders
+    from project.multilabel_model import MultiLabelDACGModel
+    from project.multilabel_trainer import create_multilabel_trainer
+
+    logger.info("启动单任务多标签训练流程")
+    logger.info(f"使用配置文件: {config_path}")
+
+    dataloader_args = create_args_namespace(**merged_config.get('data', {}), **merged_config.get('training', {}))
+    train_loader, val_loader, test_loader, label_names = create_mimic_cxr_multilabel_data_loaders(
+        dataloader_args
+    )
+    merged_config.setdefault('model', {})['num_labels'] = len(label_names)
+    merged_config['model']['label_names'] = list(label_names)
+
+    logger.info(f"多标签类别数: {len(label_names)}")
+    logger.info(f"标签顺序: {label_names}")
+
+    model_config = create_multilabel_model_config(merged_config, label_names)
+    model = MultiLabelDACGModel.from_config(model_config)
+    model.print_model_info()
+
+    trainer_config = create_multilabel_trainer_config(merged_config, train_loader)
+    trainer = create_multilabel_trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        label_names=label_names,
+        config=trainer_config,
+        test_loader=test_loader,
+    )
+
+    resume_path = merged_config.get('experiment', {}).get('resume') or merged_config.get('resume')
+    if resume_path:
+        logger.info(f"恢复训练: {resume_path}")
+        trainer.load_checkpoint(resume_path)
+
+    logger.info("开始训练...")
+    logger.info(f"实验名称: {merged_config.get('experiment', {}).get('name', 'dacg_multilabel')}")
+    logger.info(f"训练轮数: {merged_config.get('training', {}).get('num_epochs', 100)}")
+    logger.info(f"批次大小: {merged_config.get('training', {}).get('batch_size', 16)}")
+    logger.info(f"学习率: {merged_config.get('training', {}).get('learning_rate', 1e-4)}")
+
+    trainer.train()
+
+    if test_loader is not None and merged_config.get('experiment', {}).get('test_after_train', True):
+        test_results = trainer.test()
+        logger.info(f"测试结果: {test_results}")
+
+    logger.info("多标签训练完成!")
 
 
 def validate_paths(args: Dict) -> None:
@@ -312,6 +453,18 @@ def create_args_namespace(**kwargs):
     return ArgsNamespace(**kwargs)
 
 
+def get_model_architecture(args: Dict) -> str:
+    """返回模型架构版本。默认保持 v2/原 DACG 行为。"""
+    model_cfg = args.get('model', {}) or {}
+    architecture = (
+        model_cfg.get('architecture')
+        or model_cfg.get('version')
+        or model_cfg.get('name')
+        or 'v2'
+    )
+    return str(architecture).lower()
+
+
 def main():
     """主训练函数"""
     # 1. 解析参数
@@ -344,16 +497,30 @@ def main():
     )
     logger = logging.getLogger(__name__)
 
+    task_type = str(
+        merged_config.get('task')
+        or merged_config.get('experiment', {}).get('task')
+        or merged_config.get('data', {}).get('task')
+        or ''
+    ).lower()
+    if task_type in ('multilabel', 'multi_label', 'multi-label'):
+        main_multilabel(merged_config, config_path, logger)
+        return
+
     # 7. 加载疾病顺序和候选集合
     logger.info("加载疾病元数据...")
 
+    split_dir = merged_config.get('data', {}).get('split_dir', 'data/mimic-cxr-a')
+
     # 加载 disease_order.json
-    with open('data/mimic-cxr-a/disease_order.json', 'r') as f:
+    disease_order_path = os.path.join(split_dir, 'disease_order.json')
+    with open(disease_order_path, 'r') as f:
         disease_order = json.load(f)
     logger.info(f"疾病顺序: {disease_order}")
 
     # 加载 disease_location_candidates.json
-    with open('data/mimic-cxr-a/disease_location_candidates.json', 'r') as f:
+    location_candidates_path = os.path.join(split_dir, 'disease_location_candidates.json')
+    with open(location_candidates_path, 'r') as f:
         location_candidates = json.load(f)
 
     # 构建 disease_vocab_sizes（用于 disease-specific location head）
@@ -390,11 +557,18 @@ def main():
     dataloader_args = create_args_namespace(**merged_config['data'], **merged_config['training'])
 
     try:
+        from dataloader.dataloader import create_mimic_cxr_data_loaders
+
         train_loader, val_loader, test_loader = create_mimic_cxr_data_loaders(
             args=dataloader_args,
             split_dir=merged_config['data']['split_dir'],
+            severity_to_id_json=merged_config['data'].get('severity_to_id_json'),
+            disease_modifier_to_id_json=merged_config['data'].get('disease_modifier_to_id_json'),
+            disease_anatomy_to_id_json=merged_config['data'].get('disease_anatomy_to_id_json'),
+            disease_list=disease_order,
             load_masks=merged_config['data'].get('mask_dir') is not None,
-            data_format=merged_config['data'].get('data_format', 'auto')
+            data_format=merged_config['data'].get('data_format', 'auto'),
+            no_finding_downsample_ratio=merged_config['data'].get('no_finding_downsample_ratio'),
         )
 
         # 获取疾病词汇表
@@ -414,7 +588,17 @@ def main():
     logger.info("创建模型...")
     try:
         model_config = create_model_config(merged_config)
-        model = DACGModel.from_config(model_config)
+        model_arch = get_model_architecture(merged_config)
+        if model_arch == 'v1':
+            from project.model_v1 import DACGV1Model
+
+            logger.info("使用 DACG v1 精简架构（无分区提取/双重注意力/Transformer Encoder）")
+            model = DACGV1Model.from_config(model_config)
+        else:
+            from project.model import DACGModel
+
+            logger.info("使用 DACG v2 完整架构")
+            model = DACGModel.from_config(model_config)
         model.print_model_info()
     except Exception as e:
         logger.error(f"创建模型失败: {e}")
@@ -423,6 +607,8 @@ def main():
     # 13. 创建训练器
     logger.info("创建训练器...")
     try:
+        from project.trainer import create_trainer
+
         trainer_config = create_trainer_config(merged_config)
         trainer = create_trainer(
             model=model,
@@ -437,10 +623,11 @@ def main():
         raise
 
     # 14. 恢复训练（如果指定）
-    if 'resume' in merged_config:
-        logger.info(f"恢复训练: {merged_config['resume']}")
+    resume_path = merged_config.get('experiment', {}).get('resume') or merged_config.get('resume')
+    if resume_path:
+        logger.info(f"恢复训练: {resume_path}")
         try:
-            trainer.load_checkpoint(merged_config['resume'])
+            trainer.load_checkpoint(resume_path)
         except Exception as e:
             logger.error(f"恢复训练失败: {e}")
             raise
@@ -462,7 +649,7 @@ def main():
         raise
 
     # 16. 测试模型
-    if test_loader is not None:
+    if test_loader is not None and merged_config.get('experiment', {}).get('test_after_train', True):
         logger.info("测试模型...")
         try:
             test_results = trainer.test()

@@ -1,0 +1,25 @@
+2026-05-03 20:09:45,023 - __main__ - INFO - 日志文件: ./logs_v1/dacg_v1_mimic.log
+2026-05-03 20:09:45,024 - __main__ - INFO - 日志级别: INFO
+2026-05-03 20:09:45,024 - __main__ - INFO - 加载疾病元数据...
+2026-05-03 20:09:45,024 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-05-03 20:09:45,024 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-05-03 20:09:45,024 - __main__ - INFO -   atelectasis: 35
+2026-05-03 20:09:45,024 - __main__ - INFO -   calcification: 25
+2026-05-03 20:09:45,024 - __main__ - INFO -   cardiomegaly: 20
+2026-05-03 20:09:45,024 - __main__ - INFO -   consolidation: 35
+2026-05-03 20:09:45,024 - __main__ - INFO -   edema: 25
+2026-05-03 20:09:45,024 - __main__ - INFO -   ...
+2026-05-03 20:09:45,024 - __main__ - INFO - 创建数据加载器...
+2026-05-03 20:09:45,024 - __main__ - INFO - 使用配置文件: config/v1_config.yaml
+2026-05-03 20:09:50,144 - __main__ - INFO - 创建模型...
+2026-05-03 20:09:50,149 - __main__ - INFO - 使用 DACG v1 精简架构（无分区提取/双重注意力/Transformer Encoder）
+2026-05-03 20:09:50,405 - __main__ - INFO - 创建训练器...
+2026-05-03 20:09:50,927 - __main__ - INFO - 开始训练...
+2026-05-03 20:09:50,927 - __main__ - INFO - 实验名称: dacg_v1_mimic
+2026-05-03 20:09:50,927 - __main__ - INFO - 训练轮数: 20
+2026-05-03 20:09:50,927 - __main__ - INFO - 批次大小: 8
+2026-05-03 20:09:50,927 - __main__ - INFO - 学习率: 1e-4
+2026-05-03 20:09:50,927 - __main__ - INFO - S-Score启用: False
+2026-05-03 20:58:35,405 - __main__ - INFO - 测试模型...
+2026-05-03 20:59:18,386 - __main__ - INFO - 测试结果: {'total_loss': 5.24003564667298, 'mention_loss': 0.04805232416022109, 'polarity_loss': 0.6676027893545143, 'probability_loss': 1.0581451563008752, 'severity_loss': 1.3356143208851377, 'modifier_loss': 1.4411196579258756, 'anatomy_loss': 3.083260859388754}
+2026-05-03 20:59:18,386 - __main__ - INFO - 训练完成!

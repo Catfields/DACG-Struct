@@ -106,13 +106,24 @@ def construct_labels(
                 except Exception:
                     pass
 
-            # severity: 用 severity_to_id（字符串映射）
+            # severity: 直接使用 int 值 (0-3) 作为 id，因为：
+            # - 数据中 severity 是 int: 0, 1, 2, 3
+            # - severity_to_id 的 value 也是 0, 1, 2, 3 (字符串 key 只是为了兼容 "Mild" 等)
+            # - 所以直接用 int(severity) 作为标签 id
             severity = finding.get("severity")
             if severity is not None:
-                sev_key = str(severity)
-                if sev_key in severity_to_id:
-                    sev_labels[b, k] = int(severity_to_id[sev_key])
-                    mask_sev[b, k] = True
+                try:
+                    sev_id = int(severity)
+                    # 验证范围 [0, 3]，超出范围则设为 0 (None/unknown)
+                    if 0 <= sev_id <= 3:
+                        sev_labels[b, k] = sev_id
+                        mask_sev[b, k] = True
+                except (ValueError, TypeError):
+                    # 如果是字符串 "Mild" 等，走原有字符串映射逻辑
+                    sev_key = str(severity)
+                    if sev_key in severity_to_id:
+                        sev_labels[b, k] = int(severity_to_id[sev_key])
+                        mask_sev[b, k] = True
 
             # location supervision -> modifier/anatomy
             has_loc_supervision = bool(finding.get("has_location_supervision", False))
@@ -133,15 +144,10 @@ def construct_labels(
                         anatomy_labels[b, k] = int(anat_map[anat_str])
                         mask_anat[b, k] = True
 
-        # negative findings (list[str])
-        for disease_name in neg:
-            if not disease_name or disease_name not in disease_to_idx:
-                continue
-            k = disease_to_idx[disease_name]
-
-            mention_labels[b, k] = 1.0
-            polarity_labels[b, k] = 0.0
-            mask_pol[b, k] = True
+    # NOTE: negative findings are NO LONGER used for supervision (point 4).
+    # The model uses positive/unknown labeling only. Diseases not in positive_findings
+    # are treated as unknown/missing (masked), not as negative.
+    # missing labels are already masked by the zero-initialized masks above.
 
     return {
         "mention_labels": mention_labels,
@@ -181,6 +187,7 @@ class MIMICCXRADataset(data.Dataset):
         load_masks: bool = True,
         data_format: str = "auto",
         require_masks: bool = False,
+        no_finding_downsample_ratio: Optional[float] = None,
     ):
         self.data_path = data_path
         self.split = split
@@ -190,6 +197,7 @@ class MIMICCXRADataset(data.Dataset):
         self.transform = transform
         self.load_masks = bool(load_masks and mask_dir is not None)
         self.require_masks = bool(require_masks and self.load_masks)
+        self.no_finding_downsample_ratio = no_finding_downsample_ratio
 
         self.mask_index: Dict[str, List[str]] = {}
 
@@ -241,6 +249,34 @@ class MIMICCXRADataset(data.Dataset):
         if self.load_masks:
             self.mask_index = self._build_mask_index()
         self._filter_invalid_samples()
+
+        # ---- no_finding downsampling (point 2) ----
+        # Samples where positive_findings is empty and only "no_finding" is listed
+        # are downsampled to `no_finding_ratio` (default 0.20 = keep 20%).
+        # This is applied after split filtering but before disease vocab building.
+        if getattr(self, "no_finding_downsample_ratio", None) is not None:
+            ratio = self.no_finding_downsample_ratio
+            no_finding_samples = []
+            other_samples = []
+            for s in self.data:
+                pos = s.get("positive_findings", []) or []
+                neg = s.get("negative_findings", []) or []
+                is_no_finding = (
+                    len(pos) == 0 and len(neg) == 1 and neg[0] == "no_finding"
+                ) or (
+                    len(pos) == 0 and "no_finding" in neg
+                )
+                if is_no_finding:
+                    no_finding_samples.append(s)
+                else:
+                    other_samples.append(s)
+
+            import random
+            keep_count = int(len(no_finding_samples) * ratio)
+            random.seed(42)  # reproducible
+            kept = random.sample(no_finding_samples, keep_count) if keep_count < len(no_finding_samples) else no_finding_samples
+            self.data = other_samples + kept
+            print(f"[{self.split}] no_finding downsampled: {len(no_finding_samples)} -> {len(kept)} (ratio={ratio:.2f})")
 
         # disease vocab
         if disease_list is not None:
@@ -691,6 +727,8 @@ class MIMICCXRACollator:
         return {
             "images": batch_images,
             "labels": labels,  # dict of tensors
+            "targets": labels,  # 向后兼容旧训练器命名
+            "batch_labels": label_dicts,  # 原始标签，供 S-Score/调试使用
             "image_ids": image_ids,
             "mask_images": batch_mask_images,
             "metadata": [t.get("metadata", {}) for t in targets_list],
@@ -708,10 +746,13 @@ def _load_json(path: str) -> Any:
 
 
 def load_label_maps(
-    severity_to_id_json: str,
-    disease_modifier_to_id_json: str,
-    disease_anatomy_to_id_json: str,
+    severity_to_id_json: Optional[str],
+    disease_modifier_to_id_json: Optional[str],
+    disease_anatomy_to_id_json: Optional[str],
 ) -> Tuple[Dict[str, int], Dict[str, Dict[str, int]], Dict[str, Dict[str, int]]]:
+    if not severity_to_id_json or not disease_modifier_to_id_json or not disease_anatomy_to_id_json:
+        raise ValueError("load_label_maps 需要提供三个 json 路径")
+
     severity_to_id = _load_json(severity_to_id_json)
     disease_modifier_to_id = _load_json(disease_modifier_to_id_json)
     disease_anatomy_to_id = _load_json(disease_anatomy_to_id_json)
@@ -735,15 +776,58 @@ def load_label_maps(
     return severity_to_id, disease_modifier_to_id, disease_anatomy_to_id
 
 
+def build_label_maps_from_candidates(
+    split_dir: str,
+    disease_list: Optional[List[str]] = None,
+) -> Tuple[Dict[str, int], Dict[str, Dict[str, int]], Dict[str, Dict[str, int]]]:
+    """
+    当没有预生成 maps/*.json 时，基于 disease_location_candidates.json 动态构建。
+    """
+    candidates_path = os.path.join(split_dir, "disease_location_candidates.json")
+    if not os.path.exists(candidates_path):
+        raise FileNotFoundError(
+            f"未找到标签映射文件，且无法动态构建：{candidates_path}"
+        )
+
+    with open(candidates_path, "r", encoding="utf-8") as f:
+        candidates = json.load(f)
+
+    if disease_list is None:
+        disease_list = list(candidates.keys())
+
+    severity_to_id = {
+        "None": 0, "none": 0, "": 0,
+        "Mild": 1, "mild": 1,
+        "Moderate": 2, "moderate": 2,
+        "Severe": 3, "severe": 3,
+    }
+
+    disease_modifier_to_id: Dict[str, Dict[str, int]] = {}
+    disease_anatomy_to_id: Dict[str, Dict[str, int]] = {}
+    for disease in disease_list:
+        info = candidates.get(disease, {})
+        modifier_candidates = info.get("modifier_candidates", []) or []
+        anatomy_candidates = info.get("concept_candidates", []) or []
+
+        disease_modifier_to_id[disease] = {
+            str(name): idx for idx, name in enumerate(modifier_candidates)
+        }
+        disease_anatomy_to_id[disease] = {
+            str(name): idx for idx, name in enumerate(anatomy_candidates)
+        }
+
+    return severity_to_id, disease_modifier_to_id, disease_anatomy_to_id
+
+
 # -----------------------------
 # Create data loaders
 # -----------------------------
 def create_mimic_cxr_data_loaders(
     args,
     split_dir: str,
-    severity_to_id_json: str,
-    disease_modifier_to_id_json: str,
-    disease_anatomy_to_id_json: str,
+    severity_to_id_json: Optional[str] = None,
+    disease_modifier_to_id_json: Optional[str] = None,
+    disease_anatomy_to_id_json: Optional[str] = None,
     disease_list: Optional[List[str]] = None,
     transform_train=None,
     transform_val=None,
@@ -751,6 +835,7 @@ def create_mimic_cxr_data_loaders(
     require_masks: bool = False,
     data_format: str = "auto",
     device: Optional[torch.device] = None,
+    no_finding_downsample_ratio: Optional[float] = None,
 ):
     """
     args 需要至少包含：
@@ -759,6 +844,7 @@ def create_mimic_cxr_data_loaders(
     - mask_dir（如果 load_masks=True）
     - batch_size
     - num_workers（可选）
+    - no_finding_downsample_ratio（可选，用于下采样 no_finding 样本）
     """
     # transforms
     if transform_train is None:
@@ -788,12 +874,6 @@ def create_mimic_cxr_data_loaders(
     if data_path is None:
         raise ValueError("必须提供 args.data_path 或 args.csv_path")
 
-    severity_to_id, disease_modifier_to_id, disease_anatomy_to_id = load_label_maps(
-        severity_to_id_json=severity_to_id_json,
-        disease_modifier_to_id_json=disease_modifier_to_id_json,
-        disease_anatomy_to_id_json=disease_anatomy_to_id_json,
-    )
-
     train_dataset = MIMICCXRADataset(
         data_path=data_path,
         split="train",
@@ -805,6 +885,7 @@ def create_mimic_cxr_data_loaders(
         load_masks=load_masks,
         require_masks=require_masks,
         data_format=data_format,
+        no_finding_downsample_ratio=no_finding_downsample_ratio,
     )
 
     val_dataset = MIMICCXRADataset(
@@ -818,6 +899,7 @@ def create_mimic_cxr_data_loaders(
         load_masks=load_masks,
         require_masks=require_masks,
         data_format=data_format,
+        no_finding_downsample_ratio=no_finding_downsample_ratio,
     )
 
     test_file_txt = os.path.join(split_dir, "test_image_ids.txt")
@@ -834,10 +916,34 @@ def create_mimic_cxr_data_loaders(
             load_masks=load_masks,
             require_masks=require_masks,
             data_format=data_format,
+            no_finding_downsample_ratio=no_finding_downsample_ratio,
         )
     else:
         print("警告: 未找到 test split 文件，使用 val 作为 test")
         test_dataset = val_dataset
+
+    # 标签映射：优先使用显式 json；否则从 candidates 动态构建
+    has_all_map_paths = all([
+        severity_to_id_json,
+        disease_modifier_to_id_json,
+        disease_anatomy_to_id_json,
+        os.path.exists(severity_to_id_json or ""),
+        os.path.exists(disease_modifier_to_id_json or ""),
+        os.path.exists(disease_anatomy_to_id_json or ""),
+    ])
+
+    if has_all_map_paths:
+        severity_to_id, disease_modifier_to_id, disease_anatomy_to_id = load_label_maps(
+            severity_to_id_json=severity_to_id_json,
+            disease_modifier_to_id_json=disease_modifier_to_id_json,
+            disease_anatomy_to_id_json=disease_anatomy_to_id_json,
+        )
+    else:
+        print("警告: maps/*.json 不完整，改为从 disease_location_candidates.json 动态构建标签映射。")
+        severity_to_id, disease_modifier_to_id, disease_anatomy_to_id = build_label_maps_from_candidates(
+            split_dir=split_dir,
+            disease_list=train_dataset.disease_list,
+        )
 
     collator = MIMICCXRACollator(
         disease_order=train_dataset.disease_list,

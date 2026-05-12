@@ -15,10 +15,9 @@ DISEASE_NAME_MAP = {
     'tortuosity of the thoracic aorta': 'tortuosity_of_the_thoracic_aorta',
     'enlarged cardiomediastinum': 'enlarged_cardiomediastinum',
     'no finding': 'no_finding',
-    'support devices': 'support_devices',
 }
 
-# 所有疾病列表（snake_case 格式）
+# 所有疾病列表（snake_case 格式，不含 support_devices）
 ALL_DISEASES_SNAKE_CASE = [
     'atelectasis',
     'blunting_of_costophrenic_angle',
@@ -40,7 +39,6 @@ ALL_DISEASES_SNAKE_CASE = [
     'pneumonia',
     'pneumothorax',
     'scoliosis',
-    'support_devices',
     'tortuosity_of_the_thoracic_aorta',
 ]
 
@@ -59,33 +57,14 @@ def normalize_disease_name(disease_name: str) -> str:
         return disease_name
 
     disease_lower = disease_name.strip().lower()
-
-    # 查找映射
     for original, schema_name in DISEASE_NAME_MAP.items():
         if disease_lower == original.lower():
             return schema_name
-
-    # 如果没有空格，直接返回
-    if ' ' not in disease_name:
-        return disease_name.strip()
-
-    # 如果有空格但不在映射表中，转换为 snake_case
-    return disease_name.strip().replace(' ', '_')
+    return disease_name.strip()
 
 
-if __name__ == "__main__":
-    # 测试
-    test_cases = [
-        "pleural effusion",
-        "no finding",
-        "support devices",
-        "atelectasis",
-        "lung opacity",
-        "blunting of costophrenic angle",
-    ]
-
-    print("疾病名称标准化测试:")
-    print("-" * 60)
-    for original in test_cases:
-        normalized = normalize_disease_name(original)
-        print(f"{original:40s} → {normalized}")
+def normalize_diseases_list(diseases_list: list) -> list:
+    """标准化疾病列表"""
+    if not isinstance(diseases_list, list):
+        return diseases_list
+    return [normalize_disease_name(d) for d in diseases_list]

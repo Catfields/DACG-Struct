@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
@@ -14,9 +15,11 @@ from app.models.translate_record import TranslateRecord
 from app.core.exceptions import AppException
 from app.utils.file_storage import build_visualization_path
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/xray", tags=["xray"])
 
-OVERLAY_SAMPLE_PATH = Path(__file__).resolve().parents[2] / "tests" / "output" / "visualization_validation_overlay.png"
+OVERLAY_SAMPLE_PATH = Path("/data/home/zyx/Ir-UNet/DACG/DACG-Struct/backend/tests/output/visualization_validation_overlay.png")
 
 
 def _format_datetime_value(value):
@@ -41,6 +44,37 @@ def _serialize_xray_out(xray):
         "segment_status": xray.segment_status,
         "update_time": _format_datetime_value(xray.update_time),
         "system_id": xray.system_id,
+    }
+
+
+def _serialize_segment_result(segment):
+    if segment is None:
+        return None
+    return {
+        "segment_id": segment.segment_id,
+        "xray_id": segment.xray_id,
+        "mask_path": segment.mask_path,
+        "left_lung_view_path": segment.left_lung_view_path,
+        "right_lung_view_path": segment.right_lung_view_path,
+        "heart_view_path": segment.heart_view_path,
+        "heart_area": segment.heart_area,
+        "left_lung_area": segment.left_lung_area,
+        "right_lung_area": segment.right_lung_area,
+        "model_version": segment.model_version,
+        "segment_time": _format_datetime_value(segment.segment_time),
+    }
+
+
+def _build_mask_coordinates_payload(xray_id: int, segment):
+    mask_path = Path(segment.mask_path)
+    if not mask_path.exists():
+        raise AppException("MASK_NOT_FOUND", "Mask 图片不存在", status_code=404)
+
+    metadata = segmentation_service.build_mask_coordinate_metadata(str(mask_path))
+    return {
+        "xray_id": xray_id,
+        "mask_path": segment.mask_path,
+        **metadata,
     }
 
 
@@ -71,20 +105,38 @@ async def _run_segmentation_pipeline(xray_id: int, xray_path: str, app):
         default_model = model_service.get_default_model(db)
         model_version = default_model.model_version if default_model else "unknown"
 
-        segment = SegmentResult(
-            xray_id=xray_id,
-            mask_path=post["mask_path"],
-            left_lung_view_path=post["left_lung_view_path"],
-            right_lung_view_path=post["right_lung_view_path"],
-            heart_view_path=post["heart_view_path"],
-            heart_area=post["heart_area"],
-            left_lung_area=post["left_lung_area"],
-            right_lung_area=post["right_lung_area"],
-            model_version=model_version,
-        )
-        db.add(segment)
-        db.commit()
-        db.refresh(segment)
+        # Check if placeholder segment exists (from manual-save)
+        existing_segment = xray_service.get_segment_result(db, xray_id)
+        if existing_segment and existing_segment.model_version == "manual-mock":
+            # Update the placeholder with real segmentation results
+            existing_segment.mask_path = post["mask_path"]
+            existing_segment.left_lung_view_path = post["left_lung_view_path"]
+            existing_segment.right_lung_view_path = post["right_lung_view_path"]
+            existing_segment.heart_view_path = post["heart_view_path"]
+            existing_segment.heart_area = post["heart_area"]
+            existing_segment.left_lung_area = post["left_lung_area"]
+            existing_segment.right_lung_area = post["right_lung_area"]
+            existing_segment.model_version = model_version
+            db.add(existing_segment)
+            db.commit()
+            db.refresh(existing_segment)
+            segment = existing_segment
+        else:
+            # Create new segment record
+            segment = SegmentResult(
+                xray_id=xray_id,
+                mask_path=post["mask_path"],
+                left_lung_view_path=post["left_lung_view_path"],
+                right_lung_view_path=post["right_lung_view_path"],
+                heart_view_path=post["heart_view_path"],
+                heart_area=post["heart_area"],
+                left_lung_area=post["left_lung_area"],
+                right_lung_area=post["right_lung_area"],
+                model_version=model_version,
+            )
+            db.add(segment)
+            db.commit()
+            db.refresh(segment)
 
         chinese_text, status = await translation_service.translate(english_text)
         trans = TranslateRecord(
@@ -98,6 +150,7 @@ async def _run_segmentation_pipeline(xray_id: int, xray_path: str, app):
 
         xray_service.update_status(db, xray_id, 2)
     except Exception:
+        logger.exception("Segmentation pipeline failed for xray_id=%s", xray_id)
         try:
             xray_service.update_status(db, xray_id, 3)
         except Exception:
@@ -156,7 +209,7 @@ async def get_overlay_sample():
 async def get_xray_detail(xray_id: int, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN))):
     xray = xray_service.get_xray(db, xray_id)
     segment = xray_service.get_segment_result(db, xray_id)
-    return {"xray": _serialize_xray_out(xray), "segment_result": segment}
+    return {"xray": _serialize_xray_out(xray), "segment_result": _serialize_segment_result(segment)}
 
 
 @router.get("/{xray_id}/mask")
@@ -172,13 +225,57 @@ async def get_views(xray_id: int, db: Session = Depends(get_db), current_user=De
     segment = xray_service.get_segment_result(db, xray_id)
     if not segment:
         raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    mask_coordinates = _build_mask_coordinates_payload(xray_id, segment)
     return {
         "mask_path": segment.mask_path,
         "visualization_path": build_visualization_path(xray_id),
         "left_lung_view_path": segment.left_lung_view_path,
         "right_lung_view_path": segment.right_lung_view_path,
         "heart_view_path": segment.heart_view_path,
+        "mask_coordinates": mask_coordinates,
     }
+
+
+@router.get("/{xray_id}/mask-coordinates")
+async def get_mask_coordinates(
+    xray_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
+):
+    segment = xray_service.get_segment_result(db, xray_id)
+    if not segment:
+        raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    return _build_mask_coordinates_payload(xray_id, segment)
+
+
+@router.get("/{xray_id}/segment-status")
+async def get_segment_status(
+    xray_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
+):
+    xray = xray_service.get_xray(db, xray_id)
+    return {"segment_status": xray.segment_status}
+
+
+@router.post("/{xray_id}/segment")
+async def trigger_segmentation(
+    xray_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
+):
+    xray = xray_service.get_xray(db, xray_id)
+    if xray.segment_status == 1:
+        raise AppException("SEGMENT_IN_PROGRESS", "分割正在进行中", status_code=400)
+    if xray.segment_status == 2:
+        segment = xray_service.get_segment_result(db, xray_id)
+        # Only block if real segmentation exists (not placeholder)
+        if segment and segment.model_version != "manual-mock":
+            raise AppException("SEGMENT_ALREADY_EXISTS", "分割结果已存在", status_code=400)
+    
+    asyncio.create_task(_run_segmentation_pipeline(xray_id, xray.xray_original_path, request.app))
+    return {"message": "分割任务已启动", "xray_id": xray_id}
 
 
 @router.get("/{xray_id}/visualization")

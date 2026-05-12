@@ -6,15 +6,19 @@
 data:
   name: "mimic-cxr-a"
   # 数据文件路径（支持JSONL或CSV格式）
-  data_path: "/home/y530/handsome/DACG/data/mimic-cxr-a/all_structured_reports.jsonl"
+  data_path: "data/mimic-cxr-a/all_structured_reports.jsonl"
   # 数据格式：auto（自动检测）、csv、jsonl
   data_format: "auto"
   # 图像目录
-  image_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/images"
+  image_dir: "data/mimic-cxr-a/images"
   # 掩膜目录
-  mask_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/masks"
+  mask_dir: "data/mimic-cxr-a/masks"
   # 分割目录（包含train_image_ids.txt, val_image_ids.txt等）
-  split_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a"
+  split_dir: "data/mimic-cxr-a"
+  
+  # no_finding 下采样比例（0.0-1.0），设置为 0.225 即下采样到约 22.5%
+  # 设置为 null 或省略则不下采样
+  no_finding_downsample_ratio: 0.225
   
   # 掩膜配置
   mask:
@@ -69,7 +73,7 @@ training:
   scheduler: "cosine_annealing_warm_restarts"
   
   # 数据加载
-  num_workers: 4
+  num_workers: 0
   pin_memory: true
   drop_last: true
   
@@ -89,19 +93,23 @@ loss:
   weights:
     mention_loss: 1.0
     polarity_loss: 1.0
-    probability_loss: 1.0
-    severity_loss: 1.0
+    probability_loss: 0.0   # 暂时禁用
+    severity_loss: 0.0      # 暂时禁用
     location_loss: 1.0
-  
+
   # Focal Loss参数
   focal:
     alpha: 0.75
     gamma: 2.0
     eps: 1e-6
-  
+
   # 数值稳定性
   clip_grad_norm: 1.0
   use_amp: false
+
+  # Class weights for polarity BCE: [w_negative, w_positive]
+  # Adjust based on your data distribution, e.g. [1.0, 3.0] gives 3x weight to positive class
+  polarity_class_weights: [1.0, 1.0]
 
 # S-Score评估配置
 s_score:
@@ -151,7 +159,7 @@ experiment:
 # 环境配置
 environment:
   # 设备配置
-  device: "cuda"  # auto, cuda:0, cuda:1, cpu
+  device: "auto"  # auto, cuda:0, cuda:1, cpu
   mixed_precision: true
   deterministic: false
   

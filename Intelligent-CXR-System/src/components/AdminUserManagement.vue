@@ -23,7 +23,7 @@
         <input
           v-model="searchForm.keyword"
           class="toolbar-input"
-          placeholder="登录名/姓名"
+          placeholder="用户名/姓名"
           @keyup.enter="onSearch"
         />
         <label class="toolbar-label">角色：</label>
@@ -39,8 +39,18 @@
         </select>
         <button class="toolbar-btn" @click="onSearch">查询</button>
         <button class="toolbar-btn secondary" @click="onResetSearch">重置</button>
+        <button 
+          v-if="selectedUsers.length > 0"
+          class="toolbar-btn danger" 
+          @click="onBatchDelete"
+        >
+          批量删除 ({{ selectedUsers.length }})
+        </button>
       </div>
       <div class="toolbar-right">
+        <button class="toolbar-btn primary" @click="onOpenImportDialog">
+          批量导入
+        </button>
         <button class="toolbar-btn primary" @click="onOpenCreateDialog">
           新建账号
         </button>
@@ -52,7 +62,15 @@
         <table class="list-table">
           <thead>
             <tr>
-              <th>登录名</th>
+              <th style="width: 40px;">
+                <input 
+                  type="checkbox" 
+                  :checked="isAllSelected"
+                  :indeterminate="isPartiallySelected"
+                  @change="onSelectAll"
+                />
+              </th>
+              <th>用户名</th>
               <th>姓名</th>
               <th>角色</th>
               <th>登录方式</th>
@@ -62,6 +80,13 @@
           </thead>
           <tbody>
             <tr v-for="item in filteredUsers" :key="item.user_id">
+              <td>
+                <input 
+                  type="checkbox" 
+                  :checked="selectedUsers.includes(item.user_id)"
+                  @change="onSelectUser(item.user_id, $event.target.checked)"
+                />
+              </td>
               <td>{{ item.login_name }}</td>
               <td>{{ item.real_name }}</td>
               <td>{{ formatRole(item.role_id) }}</td>
@@ -85,7 +110,7 @@
               </td>
             </tr>
             <tr v-if="!loading && filteredUsers.length === 0">
-              <td class="empty-row" colspan="6">
+              <td class="empty-row" colspan="7">
                 {{ error || '暂无可管理账号' }}
               </td>
             </tr>
@@ -103,7 +128,7 @@
         <div class="dialog-title">新建账号</div>
         <div class="form-grid">
           <label class="form-item">
-            <span class="label">登录名*</span>
+            <span class="label">用户名*</span>
             <input v-model="createForm.loginName" class="form-input" type="text" />
           </label>
           <label class="form-item">
@@ -151,7 +176,7 @@
         <div class="dialog-title">编辑账号</div>
         <div class="form-grid">
           <label class="form-item">
-            <span class="label">登录名</span>
+            <span class="label">用户名</span>
             <input :value="editForm.loginName" class="form-input" type="text" disabled />
           </label>
           <label class="form-item">
@@ -186,11 +211,128 @@
       </div>
     </div>
 
+    <div v-if="importDialog.visible" class="dialog-mask">
+      <div class="dialog-card import-card">
+        <div class="dialog-title">批量导入账号</div>
+        <div class="import-content">
+          <div class="import-steps">
+            <h4>导入步骤：</h4>
+            <ol>
+              <li>下载模板文件，按照格式填写用户信息</li>
+              <li>选择填写好的Excel或CSV文件</li>
+              <li>点击"开始导入"进行批量创建</li>
+            </ol>
+          </div>
+          <div class="template-download">
+            <button class="toolbar-btn secondary" @click="onDownloadTemplate">
+              下载模板文件
+            </button>
+          </div>
+          <div class="file-upload">
+            <label class="form-item full">
+              <span class="label">选择文件 (支持 .xlsx, .xls, .csv)</span>
+              <input 
+                type="file" 
+                class="form-input" 
+                accept=".xlsx,.xls,.csv"
+                @change="onFileSelected"
+              />
+            </label>
+            <div v-if="importDialog.fileName" class="selected-file">
+              已选择：{{ importDialog.fileName }}
+            </div>
+          </div>
+          <div v-if="importDialog.preview.length > 0" class="import-preview">
+            <h4>数据预览 (前5条)：</h4>
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th>用户名</th>
+                  <th>姓名</th>
+                  <th>角色</th>
+                  <th>手机号</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(item, index) in importDialog.preview" :key="index">
+                  <td>{{ item.loginName }}</td>
+                  <td>{{ item.realName }}</td>
+                  <td>{{ item.roleName }}</td>
+                  <td>{{ item.phone || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="toolbar-btn secondary" @click="onCloseImportDialog">
+            取消
+          </button>
+          <button 
+            class="toolbar-btn primary" 
+            :disabled="!importDialog.file || importing"
+            @click="onStartImport"
+          >
+            {{ importing ? '导入中...' : '开始导入' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="batchPasswordDialog.visible" class="dialog-mask">
+      <div class="dialog-card batch-password-card">
+        <div class="dialog-title">{{ batchPasswordDialog.title }}</div>
+        <div class="batch-password-content">
+          <p class="password-summary">
+            成功创建 {{ batchPasswordDialog.successCount }} 个账号，失败 {{ batchPasswordDialog.failCount }} 个
+          </p>
+          <div v-if="batchPasswordDialog.successCount > 0" class="password-list">
+            <h4>成功创建的账号密码：</h4>
+            <div class="password-table-wrapper">
+              <table class="password-table">
+                <thead>
+                  <tr>
+                    <th>用户名</th>
+                    <th>姓名</th>
+                    <th>密码</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(user, index) in batchPasswordDialog.successUsers" :key="index">
+                    <td>{{ user.loginName }}</td>
+                    <td>{{ user.realName }}</td>
+                    <td class="password-cell">{{ user.password }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div v-if="batchPasswordDialog.failCount > 0" class="error-list">
+            <h4>失败的账号：</h4>
+            <ul class="error-items">
+              <li v-for="(error, index) in batchPasswordDialog.errors" :key="index">
+                {{ error }}
+              </li>
+            </ul>
+          </div>
+        </div>
+        <p class="password-hint">
+          ⚠️ 请立即复制并分发给对应医生，关闭后不再展示明文密码。
+        </p>
+        <div class="dialog-actions">
+          <button class="toolbar-btn" @click="onCopyBatchPasswords">复制全部信息</button>
+          <button class="toolbar-btn primary" @click="onCloseBatchPasswordDialog">
+            我已记录
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="passwordDialog.visible" class="dialog-mask">
       <div class="dialog-card password-card">
         <div class="dialog-title">{{ passwordDialog.title }}</div>
         <p class="password-line">
-          登录名：<strong>{{ passwordDialog.loginName }}</strong>
+          用户名：<strong>{{ passwordDialog.loginName }}</strong>
         </p>
         <p class="password-line">
           一次性密码：<strong>{{ passwordDialog.password }}</strong>
@@ -241,16 +383,26 @@ const ROLE_ID_ATTENDING = Number(
 const ROLE_OPTIONS = [
   { id: ROLE_ID_RADIOLOGIST, label: '影像科医生' },
   { id: ROLE_ID_ATTENDING, label: '主治医生' },
+  { id: 3, label: '管理员' },
 ]
 const LOGIN_FLAG_OPTIONS = [
-  { value: 1, label: '工号' },
+  { value: 1, label: '用户名' },
   { value: 2, label: '手机号' },
 ]
 
 const users = ref([])
 const loading = ref(false)
 const submitting = ref(false)
+const importing = ref(false)
 const error = ref('')
+const selectedUsers = ref([])
+
+const importDialog = ref({
+  visible: false,
+  file: null,
+  fileName: '',
+  preview: [],
+})
 
 const searchForm = ref({
   keyword: '',
@@ -287,6 +439,15 @@ const passwordDialog = ref({
   password: '',
 })
 
+const batchPasswordDialog = ref({
+  visible: false,
+  title: '',
+  successCount: 0,
+  failCount: 0,
+  successUsers: [],
+  errors: [],
+})
+
 const filteredUsers = computed(() => {
   const keyword = String(activeFilter.value.keyword || '').trim().toLowerCase()
   const roleId = activeFilter.value.roleId === '' ? '' : Number(activeFilter.value.roleId)
@@ -302,8 +463,18 @@ const filteredUsers = computed(() => {
   })
 })
 
+const isAllSelected = computed(() => {
+  return filteredUsers.value.length > 0 && 
+         filteredUsers.value.every(item => selectedUsers.value.includes(item.user_id))
+})
+
+const isPartiallySelected = computed(() => {
+  return selectedUsers.value.length > 0 && 
+         selectedUsers.value.length < filteredUsers.value.length
+})
+
 function formatLoginFlag(value) {
-  return Number(value) === 2 ? '手机号' : '工号'
+  return Number(value) === 2 ? '手机号' : '用户名'
 }
 
 function formatRole(roleId) {
@@ -354,6 +525,216 @@ function onResetSearch() {
   }
 }
 
+// Batch selection functions
+function onSelectAll(checked) {
+  if (checked) {
+    selectedUsers.value = filteredUsers.value.map(item => item.user_id)
+  } else {
+    selectedUsers.value = []
+  }
+}
+
+function onSelectUser(userId, checked) {
+  if (checked) {
+    if (!selectedUsers.value.includes(userId)) {
+      selectedUsers.value.push(userId)
+    }
+  } else {
+    const index = selectedUsers.value.indexOf(userId)
+    if (index > -1) {
+      selectedUsers.value.splice(index, 1)
+    }
+  }
+}
+
+// Batch delete function
+async function onBatchDelete() {
+  if (selectedUsers.value.length === 0) return
+  
+  if (!window.confirm(`确认删除选中的 ${selectedUsers.value.length} 个账号吗？`)) {
+    return
+  }
+
+  submitting.value = true
+  try {
+    // Delete users one by one (since backend doesn't have batch delete API)
+    const deletePromises = selectedUsers.value.map(userId => deleteUser(userId))
+    await Promise.all(deletePromises)
+    
+    selectedUsers.value = []
+    await loadUsers()
+    window.alert('批量删除成功')
+  } catch (err) {
+    window.alert(err?.message || '批量删除失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// Import dialog functions
+function onOpenImportDialog() {
+  importDialog.value = {
+    visible: true,
+    file: null,
+    fileName: '',
+    preview: [],
+  }
+}
+
+function onCloseImportDialog() {
+  importDialog.value = {
+    visible: false,
+    file: null,
+    fileName: '',
+    preview: [],
+  }
+}
+
+function onDownloadTemplate() {
+  // Create CSV template with realistic login names
+  const template = '用户名,姓名,角色,手机号\nYXK001,张三,影像科医生,13800138000\nZZY002,李四,主治医生,13800138001\nYXK003,王五,影像科医生,13800138002\nZZY004,赵六,主治医生,13800138003\nADMIN005,孙七,管理员,13800138004'
+  const blob = new Blob(['\ufeff' + template], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = '用户导入模板.csv'
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+function onFileSelected(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  importDialog.value.file = file
+  importDialog.value.fileName = file.name
+  importDialog.value.preview = []
+
+  // Parse file for preview
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const content = e.target.result
+      const lines = content.split('\n').filter(line => line.trim())
+      if (lines.length < 2) {
+        window.alert('文件格式错误：至少需要标题行和一行数据')
+        return
+      }
+
+      // Parse CSV/Excel-like data
+      const headers = lines[0].split(',').map(h => h.trim())
+      const data = []
+      
+      for (let i = 1; i < Math.min(6, lines.length); i++) {
+        const values = lines[i].split(',').map(v => v.trim())
+        if (values.length >= 3) {
+          data.push({
+            loginName: values[0] || '',
+            realName: values[1] || '',
+            roleName: values[2] || '',
+            phone: values[3] || ''
+          })
+        }
+      }
+      
+      importDialog.value.preview = data
+    } catch (err) {
+      window.alert('文件解析失败：' + err.message)
+    }
+  }
+  
+  reader.readAsText(file)
+}
+
+async function onStartImport() {
+  if (!importDialog.value.file) return
+
+  importing.value = true
+  try {
+    const content = await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = (e) => resolve(e.target.result)
+      reader.onerror = reject
+      reader.readAsText(importDialog.value.file)
+    })
+
+    const lines = content.split('\n').filter(line => line.trim())
+    if (lines.length < 2) {
+      throw new Error('文件至少需要标题行和一行数据')
+    }
+
+    const usersToCreate = []
+    const errors = []
+
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(',').map(v => v.trim())
+      if (values.length < 3) continue
+
+      const loginName = values[0]
+      const realName = values[1]
+      const roleName = values[2]
+      const phone = values[3] || ''
+
+      // Find role ID by role name
+      const role = ROLE_OPTIONS.find(r => r.label === roleName)
+      if (!role) {
+        errors.push(`第${i + 1}行: 角色名称"${roleName}"不存在`)
+        continue
+      }
+
+      if (!loginName || !realName) {
+        errors.push(`第${i + 1}行: 用户名和姓名不能为空`)
+        continue
+      }
+
+      const password = generateInitialPassword(loginName)
+      usersToCreate.push({
+        login_name: loginName,
+        real_name: realName,
+        role_id: role.id,
+        login_flag: 1,
+        password: password,
+        phone: normalizePhone(phone)
+      })
+    }
+
+    if (errors.length > 0 && usersToCreate.length === 0) {
+      throw new Error('数据验证失败：\n' + errors.join('\n'))
+    }
+
+    // Create users one by one and collect results
+    const successUsers = []
+    for (const userData of usersToCreate) {
+      try {
+        await createUser(userData)
+        successUsers.push({
+          loginName: userData.login_name,
+          realName: userData.real_name,
+          password: userData.password
+        })
+      } catch (err) {
+        errors.push(`${userData.login_name}: ${err.message}`)
+      }
+    }
+
+    // Show batch password dialog
+    batchPasswordDialog.value = {
+      visible: true,
+      title: '批量导入结果',
+      successCount: successUsers.length,
+      failCount: errors.length,
+      successUsers: successUsers,
+      errors: errors
+    }
+
+    onCloseImportDialog()
+    await loadUsers()
+  } catch (err) {
+    window.alert('导入失败：' + err.message)
+  } finally {
+    importing.value = false
+  }
+}
+
 function onOpenCreateDialog() {
   resetCreateForm()
   createDialogVisible.value = true
@@ -388,6 +769,59 @@ function onClosePasswordDialog() {
     title: '',
     loginName: '',
     password: '',
+  }
+}
+
+function onCloseBatchPasswordDialog() {
+  batchPasswordDialog.value = {
+    visible: false,
+    title: '',
+    successCount: 0,
+    failCount: 0,
+    successUsers: [],
+    errors: [],
+  }
+}
+
+async function onCopyBatchPasswords() {
+  const dialog = batchPasswordDialog.value
+  let text = `批量导入结果\n`
+  text += `成功创建：${dialog.successCount} 个账号\n`
+  text += `失败：${dialog.failCount} 个账号\n\n`
+  
+  if (dialog.successUsers.length > 0) {
+    text += `成功创建的账号密码：\n`
+    text += `用户名\t姓名\t密码\n`
+    dialog.successUsers.forEach(user => {
+      text += `${user.loginName}\t${user.realName}\t${user.password}\n`
+    })
+  }
+  
+  if (dialog.errors.length > 0) {
+    text += `\n失败的账号：\n`
+    dialog.errors.forEach(error => {
+      text += `${error}\n`
+    })
+  }
+
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      throw new Error('Clipboard API not available')
+    }
+    window.alert('批量账号信息已复制')
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', '')
+    textarea.style.position = 'absolute'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    window.alert('批量账号信息已复制')
   }
 }
 
@@ -583,6 +1017,7 @@ onMounted(() => {
 .toolbar-right {
   display: flex;
   align-items: center;
+  gap: 12px;
 }
 .toolbar-label {
   font-size: 13px;
@@ -744,6 +1179,172 @@ onMounted(() => {
   border: 1px solid #fde68a;
   border-radius: 8px;
   padding: 8px;
+}
+
+/* Batch operations styles */
+input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+/* Import dialog styles */
+.import-card {
+  width: min(700px, 94vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.import-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.import-steps h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.import-steps ol {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.import-steps li {
+  margin-bottom: 4px;
+}
+
+.template-download {
+  display: flex;
+  justify-content: center;
+}
+
+.selected-file {
+  font-size: 13px;
+  color: #059669;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  padding: 8px;
+  margin-top: 4px;
+}
+
+.import-preview {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.import-preview h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.preview-table th,
+.preview-table td {
+  padding: 6px 8px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.preview-table th {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+.preview-table td {
+  background: #ffffff;
+}
+
+/* Batch password dialog styles */
+.batch-password-card {
+  width: min(800px, 94vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.batch-password-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.password-summary {
+  margin: 0;
+  font-size: 14px;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.password-list h4,
+.error-list h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.password-table-wrapper {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.password-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.password-table th,
+.password-table td {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.password-table th {
+  background: #f1f5f9;
+  font-weight: 600;
+}
+
+.password-table td {
+  background: #ffffff;
+}
+
+.password-cell {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #059669;
+}
+
+.error-list {
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fef2f2;
+}
+
+.error-items {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.error-items li {
+  margin-bottom: 4px;
 }
 
 @media (max-width: 1080px) {

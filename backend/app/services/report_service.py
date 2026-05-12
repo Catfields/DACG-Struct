@@ -245,7 +245,7 @@ def manual_save_report(
             xray_format=xray_format or "PNG",
             upload_user_id=upload_user_id,
             upload_time=upload_time,
-            segment_status=2,
+            segment_status=0,  # Set to pending so real segmentation can be triggered on-demand
         )
         db.add(xray)
         db.flush()

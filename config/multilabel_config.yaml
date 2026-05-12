@@ -1,0 +1,97 @@
+# ============================================================================
+# DACG 单任务多标签分类训练配置
+# ============================================================================
+
+task: "multilabel"
+
+data:
+  name: "mimic-cxr-multilabels"
+  task: "multilabel"
+  root_dir: "data/mimic-cxr-multilabels"
+  csv_path: "data/mimic-cxr-multilabels/mimic-cxr.csv"
+  # 默认自动使用 CSV 中除 filename/split/label 外的数值列作为标签。
+  label_columns: null
+  skip_missing: true
+
+model:
+  visual_extractor: "resnet101"
+  visual_extractor_pretrained: false
+  d_model: 512
+  num_regions: 4
+  num_labels: "auto"
+
+  vfused_encoder:
+    layers: 6
+    heads: 8
+    d_ff: 2048
+    dropout: 0.1
+
+  dropout: 0.1
+
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 1e-4
+  weight_decay: 1e-5
+  max_grad_norm: 1.0
+  eval_interval: 1
+  log_interval: 50
+  progress_bar: true
+
+  num_workers: 0
+  pin_memory: true
+  drop_last: true
+  # none / weighted。weighted 会对少数类阳性样本做加权重采样；默认先用 focal + pos_weight。
+  sampler: "none"
+
+  augmentation:
+    enabled: true
+    resize: 256
+    crop_size: 224
+    random_horizontal_flip: 0.5
+    normalize:
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+
+loss:
+  # bce / focal。focal 更适合当前多标签长尾和正负不均衡场景。
+  type: "focal"
+  focal_alpha: null
+  focal_gamma: 2.0
+  # loss 前对 logits 做有限值保护，避免早期数值爆掉导致整批跳过。
+  logit_clip: 20.0
+  # 可设为 null、手动列表，或 "auto"。auto 使用 train split 的 neg/pos 估计 BCE pos_weight。
+  pos_weight: "auto"
+  max_pos_weight: 10.0
+
+metrics:
+  threshold: 0.5
+
+experiment:
+  name: "dacg_mimic_multilabel"
+  description: "Single-task multi-label DACG training on mimic-cxr-multilabels"
+  seed: 42
+  resume: null
+  test_after_train: true
+
+  save:
+    dir: "./checkpoints_multilabel"
+    interval: 5
+    keep_latest: true
+    keep_best: true
+
+  logging:
+    dir: "./logs"
+    level: "INFO"
+    save_history: true
+
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 1e-4
+    monitor: "loss"
+
+environment:
+  device: "auto"
+  mixed_precision: true
+  deterministic: false

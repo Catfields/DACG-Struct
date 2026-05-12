@@ -1,6 +1,11 @@
 # project/model.py
 # -*- coding: utf-8 -*-
 
+from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Dict, List, Optional
+
 import torch
 import torch.nn as nn
 
@@ -15,6 +20,26 @@ from modules.encoder import V_fused_Encoder
 from modules.structured_decoder import StructuredDecoder
 from modules.multi_head_classifier import MultiHeadClassifier
 import json
+
+
+@dataclass
+class DACGModelConfig:
+    visual_extractor: str = "resnet101"
+    visual_feat_dim: int = 2048
+    visual_extractor_pretrained: bool = False
+    d_model: int = 512
+    num_regions: int = 4
+    vfused_encoder_layers: int = 1
+    vfused_encoder_heads: int = 8
+    vfused_encoder_d_ff: int = 2048
+    vfused_encoder_dropout: float = 0.1
+    num_diseases: int = 16
+    location_vocab_size: int = -1
+    dropout: float = 0.1
+    device: str = "auto"
+    disease_vocab_sizes: Optional[Dict[str, int]] = None
+    disease_order: Optional[List[str]] = None
+    disease_json_path: str = "data/mimic-cxr-a/disease_location_candidates.json"
 
 def load_disease_vocab_info(json_path: str):
     """
@@ -75,25 +100,43 @@ class FullModel(nn.Module):
         self.partition = PartitionModule(**kwargs.get("partition_kwargs", {}))
 
         # 2) 视觉特征提取
-        self.visual_extractor = VisualExtractor(**kwargs.get("visual_extractor_kwargs", {}))
+        visual_extractor_kwargs = kwargs.get("visual_extractor_kwargs", {})
+        if isinstance(visual_extractor_kwargs, dict):
+            visual_extractor_args = SimpleNamespace(**visual_extractor_kwargs)
+        else:
+            visual_extractor_args = visual_extractor_kwargs
+        self.visual_extractor = VisualExtractor(visual_extractor_args)
 
         # 3) 双注意力（只作用于 global tokens）
-        self.dual_attention = DualAttention(**kwargs.get("dual_attention_kwargs", {}))
+        dual_attention_kwargs = kwargs.get("dual_attention_kwargs", {})
+        if dual_attention_kwargs:
+            self.dual_attention = DualAttention(**dual_attention_kwargs)
+        else:
+            self.dual_attention = DualAttention()
 
         # 4) 通道门控融合
-        self.channel_gated_fusion = RegionWiseChannelGatedFusion(
-            **kwargs.get("channel_gated_kwargs", {})
-        )
+        channel_gated_kwargs = {
+            "feature_dim": hidden_dim,
+            "num_regions": 4,
+        }
+        channel_gated_kwargs.update(kwargs.get("channel_gated_kwargs", {}))
+        self.channel_gated_fusion = RegionWiseChannelGatedFusion(**channel_gated_kwargs)
 
         # 5) MoE区域聚合
-        self.moe_region_agg = MoERegionAggregation(**kwargs.get("moe_kwargs", {}))
+        moe_kwargs = {
+            "feature_dim": hidden_dim,
+            "num_regions": 4,
+        }
+        moe_kwargs.update(kwargs.get("moe_kwargs", {}))
+        self.moe_region_agg = MoERegionAggregation(**moe_kwargs)
 
         # 6) 引导查询生成
-        self.gm_generator = GM_Generator(
-            num_queries=num_queries,
-            hidden_dim=hidden_dim,
-            **kwargs.get("gm_kwargs", {}),
-        )
+        gm_kwargs = {
+            "num_queries": num_queries,
+            "hidden_dim": hidden_dim,
+        }
+        gm_kwargs.update(kwargs.get("gm_kwargs", {}))
+        self.gm_generator = GM_Generator(**gm_kwargs)
 
         # 7) 编码器
         self.encoder = V_fused_Encoder(
@@ -102,7 +145,9 @@ class FullModel(nn.Module):
         )
 
         # 8) 解码器
-        self.decoder = StructuredDecoder(**kwargs.get("decoder_kwargs", {}))
+        decoder_kwargs = {"d_model": hidden_dim}
+        decoder_kwargs.update(kwargs.get("decoder_kwargs", {}))
+        self.decoder = StructuredDecoder(**decoder_kwargs)
         
         # 9) 多头分类器
         self.classifier = MultiHeadClassifier(
@@ -209,6 +254,89 @@ class FullModel(nn.Module):
         # outputs["region_vectors"] = region_vectors
 
         return outputs
+
+    def print_model_info(self) -> None:
+        uninitialized = 0
+        total_params = 0
+        trainable_params = 0
+        for p in self.parameters():
+            # LazyLinear 在第一次前向前会包含 UninitializedParameter
+            if p.__class__.__name__ == "UninitializedParameter":
+                uninitialized += 1
+                continue
+            n = p.numel()
+            total_params += n
+            if p.requires_grad:
+                trainable_params += n
+        print("DACG 模型信息:")
+        print(f"  disease_json_path: {self.disease_json_path}")
+        print(f"  num_queries: {self.num_queries}")
+        print(f"  total_params: {total_params:,}")
+        print(f"  trainable_params: {trainable_params:,}")
+        if uninitialized > 0:
+            print(f"  uninitialized_params: {uninitialized} (将在首次 forward 后初始化)")
+
+
+class DACGModel(FullModel):
+    """
+    FullModel 的训练入口兼容包装类。
+    """
+
+    @classmethod
+    def from_config(cls, config: DACGModelConfig) -> "DACGModel":
+        if not isinstance(config, DACGModelConfig):
+            raise TypeError(f"config 必须是 DACGModelConfig，实际为 {type(config)}")
+
+        disease_json_path = str(config.disease_json_path)
+        if not Path(disease_json_path).exists():
+            raise FileNotFoundError(
+                f"disease_json_path 不存在: {disease_json_path}. "
+                "请确认配置中的 model.disease_json_path 或数据目录。"
+            )
+
+        num_regions = config.num_regions
+        if num_regions != 4:
+            print(
+                f"[Warn] 当前模型实现固定使用 4 个区域，收到 num_regions={num_regions}，"
+                "将自动回退为 4。"
+            )
+            num_regions = 4
+
+        return cls(
+            hidden_dim=config.d_model,
+            num_queries=config.num_diseases,
+            disease_json_path=disease_json_path,
+            visual_extractor_kwargs={
+                "visual_extractor": config.visual_extractor,
+                "visual_extractor_pretrained": config.visual_extractor_pretrained,
+            },
+            channel_gated_kwargs={
+                "feature_dim": config.d_model,
+                "num_regions": num_regions,
+            },
+            moe_kwargs={
+                "feature_dim": config.d_model,
+                "num_regions": num_regions,
+            },
+            gm_kwargs={
+                "hidden_dim": config.d_model,
+                "num_queries": config.num_diseases,
+                "dropout": config.dropout,
+            },
+            encoder_kwargs={
+                "num_layers": config.vfused_encoder_layers,
+                "num_heads": config.vfused_encoder_heads,
+                "d_ff": config.vfused_encoder_d_ff,
+                "dropout": config.vfused_encoder_dropout,
+            },
+            decoder_kwargs={
+                "d_model": config.d_model,
+                "nhead": config.vfused_encoder_heads,
+                "num_layers": max(1, config.vfused_encoder_layers),
+                "dim_feedforward": config.vfused_encoder_d_ff,
+                "dropout": config.vfused_encoder_dropout,
+            },
+        )
 
 
 if __name__ == "__main__":

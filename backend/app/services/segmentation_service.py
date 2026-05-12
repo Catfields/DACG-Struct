@@ -5,6 +5,13 @@ import sys
 import numpy as np
 
 
+ORGAN_DISPLAY_NAMES = {
+    "right_lung": "右肺",
+    "left_lung": "左肺",
+    "heart": "心脏",
+}
+
+
 def _require_cv2() -> Any:
     try:
         import cv2  # type: ignore
@@ -53,24 +60,25 @@ def _load_segmentation_config() -> dict[str, Any]:
 
 
 def preprocess(xray_original_path: str):
-    """灰度化 + CLAHE + Resize -> tensor [1,3,H,W]"""
-    cv2 = _require_cv2()
+    """RGB + resize + /255 + ImageNet mean/std -> tensor [1,3,H,W]"""
+    from PIL import Image
     config = _load_segmentation_config()
-    img = cv2.imread(xray_original_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        raise RuntimeError("影像读取失败")
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    img = clahe.apply(img)
-    img = cv2.resize(
-        img,
-        (config["img_width"], config["img_height"]),
-        interpolation=cv2.INTER_AREA,
-    )
-    img = img.astype(np.float32) / 255.0
-    img = np.repeat(img[..., None], 3, axis=2)
+    
+    # RGB转换
+    image = Image.open(xray_original_path).convert("RGB")
+    # Resize
+    image_resized = image.resize((config["img_width"], config["img_height"]), resample=Image.BILINEAR)
+    # 归一化
+    image_array = np.array(image_resized).astype(np.float32) / 255.0
     torch = _require_torch()
-    tensor = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
-    return tensor
+    image_tensor = torch.from_numpy(image_array).permute(2, 0, 1).float()
+    
+    # ImageNet标准化
+    mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
+    image_tensor = (image_tensor - mean) / std
+    image_tensor = image_tensor.unsqueeze(0)
+    return image_tensor
 
 
 async def run_inference(model, tensor):
@@ -180,6 +188,133 @@ def _build_visual_artifacts(label_map: np.ndarray, confidence_map: np.ndarray, o
     return metrics
 
 
+def _normalize_bbox(x_min: int, y_min: int, x_max: int, y_max: int, width: int, height: int) -> dict[str, float]:
+    return {
+        "x": x_min / width if width else 0.0,
+        "y": y_min / height if height else 0.0,
+        "width": (x_max - x_min + 1) / width if width else 0.0,
+        "height": (y_max - y_min + 1) / height if height else 0.0,
+    }
+
+
+def _to_browser_rgb(bgr_color: tuple[int, int, int] | list[int]) -> list[int]:
+    b, g, r = [int(v) for v in bgr_color]
+    return [r, g, b]
+
+
+def _find_external_contours(mask: np.ndarray) -> list[np.ndarray]:
+    cv2 = _require_cv2()
+    found = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return list(found[0] if len(found) == 2 else found[1])
+
+
+def build_mask_coordinate_metadata_from_label_map(
+    label_map: np.ndarray,
+    confidence_map: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Build browser-friendly organ mask coordinates in original image pixels."""
+    cv2 = _require_cv2()
+    config = _load_segmentation_config()
+    class_names = config["class_names"]
+    class_color_map = config["class_color_map"]
+
+    height, width = label_map.shape[:2]
+    organs: list[dict[str, Any]] = []
+
+    for class_id, bgr_color in class_color_map.items():
+        if class_id == 0:
+            continue
+
+        class_name = class_names[class_id] if class_id < len(class_names) else f"class_{class_id}"
+        class_mask = label_map == class_id
+        if not np.any(class_mask):
+            continue
+
+        ys, xs = np.where(class_mask)
+        x_min = int(xs.min())
+        x_max = int(xs.max())
+        y_min = int(ys.min())
+        y_max = int(ys.max())
+        pixel_count = int(class_mask.sum())
+        binary_mask = class_mask.astype(np.uint8) * 255
+
+        contours: list[list[list[int]]] = []
+        for contour in _find_external_contours(binary_mask):
+            if len(contour) < 3:
+                continue
+            perimeter = cv2.arcLength(contour, True)
+            epsilon = max(0.75, perimeter * 0.002)
+            approximated = cv2.approxPolyDP(contour, epsilon, True)
+            points = [[int(x), int(y)] for x, y in approximated.reshape(-1, 2)]
+            if len(points) >= 3:
+                contours.append(points)
+
+        mean_confidence = None
+        if confidence_map is not None:
+            mean_confidence = float(confidence_map[class_mask].mean())
+
+        organs.append(
+            {
+                "key": class_name,
+                "display_name": ORGAN_DISPLAY_NAMES.get(class_name, class_name),
+                "class_id": int(class_id),
+                "color_rgb": _to_browser_rgb(bgr_color),
+                "area": float(pixel_count),
+                "bbox": {
+                    "x": x_min,
+                    "y": y_min,
+                    "width": x_max - x_min + 1,
+                    "height": y_max - y_min + 1,
+                    "x_min": x_min,
+                    "y_min": y_min,
+                    "x_max": x_max,
+                    "y_max": y_max,
+                },
+                "normalized_bbox": _normalize_bbox(x_min, y_min, x_max, y_max, width, height),
+                "centroid": {
+                    "x": float(xs.mean()),
+                    "y": float(ys.mean()),
+                },
+                "normalized_centroid": {
+                    "x": float(xs.mean()) / width if width else 0.0,
+                    "y": float(ys.mean()) / height if height else 0.0,
+                },
+                "contours": contours,
+                "contour_count": len(contours),
+                "mean_confidence": mean_confidence,
+            }
+        )
+
+    return {
+        "image_size": {
+            "width": int(width),
+            "height": int(height),
+        },
+        "coordinate_space": "image_pixel",
+        "organs": organs,
+    }
+
+
+def build_mask_coordinate_metadata(mask_path: str) -> dict[str, Any]:
+    """Rebuild organ coordinates from a saved pure color mask PNG."""
+    cv2 = _require_cv2()
+    config = _load_segmentation_config()
+    class_color_map = config["class_color_map"]
+
+    mask_img = cv2.imread(mask_path, cv2.IMREAD_COLOR)
+    if mask_img is None:
+        raise RuntimeError("Mask 图片读取失败")
+
+    label_map = np.zeros(mask_img.shape[:2], dtype=np.uint8)
+    for class_id, bgr_color in class_color_map.items():
+        if class_id == 0:
+            continue
+        color = np.array(bgr_color, dtype=np.uint8)
+        label_map[np.all(mask_img == color, axis=2)] = int(class_id)
+
+    return build_mask_coordinate_metadata_from_label_map(label_map)
+
+
 def _overlay_mask_with_confidence(
     original_img: np.ndarray,
     label_map: np.ndarray,
@@ -262,6 +397,7 @@ def build_segmentation_artifacts(mask_tensor, original_img) -> dict[str, Any]:
     artifacts["dynamic_overlay_image"] = _overlay_mask_with_confidence(original_img, label_map, confidence_map)
     artifacts["probability_heatmap_image"] = _render_probability_heatmap(confidence_map)
     artifacts["visualization_sample_image"] = build_visualization_sample(label_map, confidence_map, original_img)
+    artifacts["organ_coordinates"] = build_mask_coordinate_metadata_from_label_map(label_map, confidence_map)
     return artifacts
 
 
@@ -273,7 +409,8 @@ def post_process(mask_tensor, original_img, xray_id: int):
     from app.utils.file_storage import build_mask_path, build_view_path, build_visualization_path
 
     mask_path = build_mask_path(xray_id)
-    cv2.imwrite(mask_path, artifacts["overlay_image"])
+    # Save label_image (pure colored mask) instead of overlay_image
+    cv2.imwrite(mask_path, artifacts["label_image"])
     visualization_path = build_visualization_path(xray_id)
     cv2.imwrite(visualization_path, artifacts["visualization_sample_image"])
 
@@ -301,6 +438,7 @@ def post_process(mask_tensor, original_img, xray_id: int):
         "lung_total_area": artifacts["lung_total_area"],
         "cardiothoracic_ratio": artifacts["cardiothoracic_ratio"],
         "mean_confidence": artifacts["mean_confidence"],
+        "organ_coordinates": artifacts["organ_coordinates"],
     }
 
 

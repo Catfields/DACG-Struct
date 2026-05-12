@@ -6,13 +6,23 @@ from app.core.exceptions import AppException
 
 
 def create_user(db: Session, data) -> User:
-    """Create a user with hashed password."""
+    """Create a user with hashed password.
+    
+    Login flag is automatically set based on phone presence:
+    - 1 = username only (no phone)
+    - 3 = both username and phone (has phone)
+    """
     existing = db.execute(select(User).where(User.login_name == data.login_name)).scalar_one_or_none()
     if existing:
         raise AppException("USER_EXISTS", "登录名已存在", status_code=400)
+    
+    # Automatically determine login_flag based on phone presence
+    has_phone = bool(data.phone and str(data.phone).strip())
+    login_flag = 3 if has_phone else 1  # 3 = both, 1 = username only
+    
     user = User(
         login_name=data.login_name,
-        login_flag=data.login_flag,
+        login_flag=login_flag,
         pwd=get_password_hash(data.password),
         real_name=data.real_name,
         role_id=data.role_id,
@@ -39,7 +49,12 @@ def get_user(db: Session, user_id: int) -> User:
 
 
 def update_user(db: Session, user_id: int, data) -> User:
-    """Update user info."""
+    """Update user info.
+    
+    If phone is added/removed, automatically update login_flag:
+    - 1 = username only (no phone)
+    - 3 = both username and phone (has phone)
+    """
     user = get_user(db, user_id)
     if data.real_name is not None:
         user.real_name = data.real_name
@@ -47,6 +62,9 @@ def update_user(db: Session, user_id: int, data) -> User:
         user.role_id = data.role_id
     if data.phone is not None:
         user.phone = data.phone
+        # Automatically update login_flag based on phone presence
+        has_phone = bool(data.phone and str(data.phone).strip())
+        user.login_flag = 3 if has_phone else 1  # 3 = both, 1 = username only
     db.add(user)
     db.commit()
     db.refresh(user)

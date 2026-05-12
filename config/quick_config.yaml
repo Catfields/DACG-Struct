@@ -5,11 +5,11 @@
 # 数据配置（继承基础配置）
 data:
   name: "mimic-cxr-a"
-  data_path: "/home/y530/handsome/DACG/data/mimic-cxr-a/all_structured_reports.jsonl"
+  data_path: "data/mimic-cxr-a/all_structured_reports.jsonl"
   data_format: "auto"
-  image_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/images"
-  mask_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a/masks"
-  split_dir: "/home/y530/handsome/DACG/data/mimic-cxr-a"
+  image_dir: "data/mimic-cxr-a/images"
+  mask_dir: "data/mimic-cxr-a/masks"
+  split_dir: "data/mimic-cxr-a"
   
   mask:
     enabled: true
@@ -30,7 +30,7 @@ data:
 model:
   visual_extractor: "resnet34"  # 更小的模型
   visual_feat_dim: 512
-  visual_extractor_pretrained: true
+  visual_extractor_pretrained: false
   
   d_model: 256  # 减小模型维度
   num_regions: 4
@@ -57,7 +57,7 @@ training:
   optimizer: "adamw"
   scheduler: "cosine_annealing_warm_restarts"
   
-  num_workers: 2  # 减少工作进程
+  num_workers: 0  # sandbox 环境下避免 multiprocessing 权限问题
   pin_memory: true
   drop_last: true
   
@@ -89,7 +89,7 @@ loss:
 
 # S-Score评估配置
 s_score:
-  enabled: true
+  enabled: false
   interval: 2  # 每2个epoch评估
   threshold: 0.3
   save_best: true
@@ -129,7 +129,7 @@ experiment:
 
 # 环境配置
 environment:
-  device: "cuda"
+  device: "auto"
   mixed_precision: true
   deterministic: false
   
