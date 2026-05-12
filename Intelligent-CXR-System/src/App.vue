@@ -15,6 +15,14 @@
       @logout="handleLogout"
     />
 
+    <!-- 已登录：管理员模型管理页 -->
+    <AdminModelManagement
+      v-else-if="currentUser?.role === 'admin' && activePage === 'model-management'"
+      :current-user="currentUser"
+      @back="activePage = 'main'"
+      @logout="handleLogout"
+    />
+
     <!-- 已登录：业务主界面 -->
     <MainLayout
       v-else
@@ -34,6 +42,7 @@
       @save-report="handleSaveReport"
       @create-exam="handleCreateExam"
       @open-user-management="activePage = 'user-management'"
+      @open-model-management="activePage = 'model-management'"
     />
   </div>
 </template>
@@ -42,6 +51,7 @@
 import { ref, computed } from 'vue'
 import LoginView from './components/LoginView.vue'
 import AdminUserManagement from './components/AdminUserManagement.vue'
+import AdminModelManagement from './components/AdminModelManagement.vue'
 import MainLayout from './components/MainLayout.vue'
 import { loginWithPassword } from './api/auth'
 import { translateText } from './api/translation'
@@ -349,8 +359,12 @@ const MOCK_REPORTS = [
 function pickMockReportByIndex(index) {
   const total = MOCK_REPORTS.length
   if (total === 0) return null
-  const normalizedIndex = ((index % total) + total) % total
-  return JSON.parse(JSON.stringify(MOCK_REPORTS[normalizedIndex]))
+  // 前两次上传固定使用报告 0 和 1，之后从报告 2~5 中随机选取
+  if (index <= 1) {
+    return JSON.parse(JSON.stringify(MOCK_REPORTS[index]))
+  }
+  const randomIndex = 2 + Math.floor(Math.random() * (total - 2))
+  return JSON.parse(JSON.stringify(MOCK_REPORTS[randomIndex]))
 }
 
 function sleep(ms) {
@@ -576,7 +590,7 @@ function setPreview(file) {
   previewUrl.value = URL.createObjectURL(file)
   currentUploadFile.value = file
   report.value = null
-  currentMockReportIndex.value = uploadCount.value % MOCK_REPORTS.length
+  currentMockReportIndex.value = uploadCount.value
   uploadCount.value += 1
 }
 

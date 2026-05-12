@@ -61,12 +61,20 @@ async def create_model(payload: ModelCreate, request: Request, db: Session = Dep
 @router.patch("/models/{model_id}/default", response_model=ModelOut)
 async def set_default_model(model_id: int, request: Request, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.ADMIN))):
     model = model_service.set_default(db, model_id)
-    try:
-        new_model = segmentation_service.load_model(model.model_path)
-        request.app.state.seg_model = new_model
-        request.app.state.model_version = model.model_version
-    except Exception as exc:
-        raise AppException("MODEL_RELOAD_FAILED", "模型热重载失败", detail=str(exc), status_code=500) from exc
+
+    # Hot-reload based on model type
+    if model.model_type == 1:
+        # Segmentation model: reload into app.state
+        try:
+            new_model = segmentation_service.load_model(model.model_path)
+            request.app.state.seg_model = new_model
+            request.app.state.model_version = model.model_version
+        except Exception as exc:
+            raise AppException("MODEL_RELOAD_FAILED", "分割模型热重载失败", detail=str(exc), status_code=500) from exc
+    elif model.model_type == 2:
+        # Generation model: update app.state reference
+        request.app.state.gen_model_version = model.model_version
+        request.app.state.gen_model_path = model.model_path
 
     await log_service.write(
         db=db,

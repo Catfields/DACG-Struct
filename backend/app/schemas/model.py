@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -21,6 +23,6 @@ class ModelOut(BaseModel):
     model_path: str
     is_default: int
     create_user_id: int
-    create_time: str
+    create_time: datetime
     model_desc: str | None = None
     system_id: int | None = None

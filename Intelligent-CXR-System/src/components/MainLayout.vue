@@ -23,6 +23,14 @@
         >
           用户管理
         </button>
+        <button
+          v-if="isAdmin"
+          class="logout-btn"
+          type="button"
+          @click="onOpenModelManagement"
+        >
+          模型管理
+        </button>
         <button class="logout-btn" @click="onLogoutClick">退出</button>
       </div>
     </header>
@@ -601,6 +609,7 @@ const props = defineProps({
 const emit = defineEmits([
   'logout',
   'open-user-management',
+  'open-model-management',
   'select-exam',
   'file-selected',
   'file-dropped',
@@ -666,6 +675,10 @@ function onResetExamSearch() {
 
 function onOpenUserManagement() {
   emit('open-user-management')
+}
+
+function onOpenModelManagement() {
+  emit('open-model-management')
 }
 
 function onSelectExamRow(index) {

@@ -31,14 +31,17 @@ def create_model(db: Session, data, create_user_id: int) -> ModelManage:
 
 
 def set_default(db: Session, model_id: int) -> ModelManage:
-    """Set model as default in a transaction."""
+    """Set model as default in a transaction. Supports both segmentation (type=1) and generation (type=2) models."""
     model = db.get(ModelManage, model_id)
     if not model:
         raise AppException("MODEL_NOT_FOUND", "模型不存在", status_code=404)
-    if model.model_type != 1:
-        raise AppException("MODEL_TYPE_INVALID", "仅支持语义分割模型设为默认", status_code=400)
+    if model.model_type not in (1, 2):
+        raise AppException("MODEL_TYPE_INVALID", "仅支持分割模型(type=1)或生成模型(type=2)设为默认", status_code=400)
 
-    current = db.execute(select(ModelManage).where(ModelManage.is_default == 1, ModelManage.model_type == 1)).scalar_one_or_none()
+    # Clear the current default for the same model type
+    current = db.execute(
+        select(ModelManage).where(ModelManage.is_default == 1, ModelManage.model_type == model.model_type)
+    ).scalar_one_or_none()
     if current and current.model_id != model_id:
         current.is_default = 0
         db.add(current)
