@@ -159,8 +159,31 @@ export async function triggerSegmentation(xrayId) {
   })
 }
 
+export async function uploadXray({
+  file,
+  patientId,
+  patientName,
+  patientGender,
+  patientAge,
+  xrayFormat,
+}) {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('patient_id', patientId || '')
+  form.append('patient_name', patientName || '')
+  if (patientGender !== null && patientGender !== undefined) {
+    form.append('patient_gender', String(patientGender))
+  }
+  if (patientAge !== null && patientAge !== undefined && patientAge !== '') {
+    form.append('patient_age', String(patientAge))
+  }
+  form.append('xray_format', xrayFormat || 'PNG')
+  return requestForm('/xray/upload', form, 'POST')
+}
+
 export async function saveManualReport({
   file,
+  xrayId,
   patientName,
   patientGender,
   patientAge,
@@ -169,7 +192,12 @@ export async function saveManualReport({
   reportContent,
 }) {
   const form = new FormData()
-  form.append('file', file)
+  if (file) {
+    form.append('file', file)
+  }
+  if (xrayId !== null && xrayId !== undefined) {
+    form.append('xray_id', String(xrayId))
+  }
   form.append('patient_name', patientName || '')
   if (patientGender !== null && patientGender !== undefined) {
     form.append('patient_gender', String(patientGender))

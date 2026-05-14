@@ -1,8 +1,12 @@
 <template>
   <div class="app-root">
+    <div v-if="authHydrating" class="app-loading">
+      正在恢复登录状态...
+    </div>
+
     <!-- 未登录：显示登录页 -->
     <LoginView
-      v-if="!currentUser"
+      v-else-if="!currentUser"
       :error="loginError"
       @login="handleLogin"
     />
@@ -19,6 +23,15 @@
     <AdminModelManagement
       v-else-if="currentUser?.role === 'admin' && activePage === 'model-management'"
       :current-user="currentUser"
+      @generation-model-default-changed="handleGenerationModelDefaultChanged"
+      @back="activePage = 'main'"
+      @logout="handleLogout"
+    />
+
+    <!-- 已登录：管理员日志审计页 -->
+    <AdminLogAudit
+      v-else-if="currentUser?.role === 'admin' && activePage === 'log-audit'"
+      :current-user="currentUser"
       @back="activePage = 'main'"
       @logout="handleLogout"
     />
@@ -31,9 +44,12 @@
       :exam-list="examList"
       :exam-list-error="examListError"
       :active-exam-index="activeExamIndex"
+      :current-xray-id="currentMaskXrayId"
       :preview-url="previewUrl"
       :report="report"
       :loading="loading"
+      :generation-model-version="selectedGenerationModelVersion"
+      :ensure-xray-for-overlay="ensureXrayForOverlay"
       @logout="handleLogout"
       @select-exam="handleSelectExam"
       @file-selected="handleFileSelected"
@@ -43,29 +59,34 @@
       @create-exam="handleCreateExam"
       @open-user-management="activePage = 'user-management'"
       @open-model-management="activePage = 'model-management'"
+      @open-log-audit="activePage = 'log-audit'"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import LoginView from './components/LoginView.vue'
 import AdminUserManagement from './components/AdminUserManagement.vue'
 import AdminModelManagement from './components/AdminModelManagement.vue'
+import AdminLogAudit from './components/AdminLogAudit.vue'
 import MainLayout from './components/MainLayout.vue'
-import { loginWithPassword } from './api/auth'
+import { loginWithPassword, refreshAccessToken } from './api/auth'
 import { translateText } from './api/translation'
 import {
   fetchXrayList,
   fetchReportsByXrayId,
   fetchXrayOriginalBlob,
   saveManualReport,
+  uploadXray,
 } from './api/cxr'
 
 /** ===== 登录状态 ===== */
+const STORED_USER_KEY = 'current_user'
 const currentUser = ref(null)
 const loginError = ref('')
 const activePage = ref('main')
+const authHydrating = ref(true)
 
 const ROLE_PROFILE_MAP = {
   影像科医生: {
@@ -85,6 +106,122 @@ const ROLE_PROFILE_MAP = {
   },
 }
 
+function buildClientUser(user = {}, fallback = {}) {
+  const roleKey = user.role_name || fallback.roleName
+  const roleProfile = ROLE_PROFILE_MAP[roleKey] || {
+    role: 'unknown',
+    roleLabel: roleKey || '未知角色',
+    department: '未分配',
+  }
+
+  return {
+    loginName: user.login_name || fallback.loginName || '',
+    displayName: user.real_name || user.login_name || fallback.loginName || '',
+    role: roleProfile.role,
+    roleLabel: roleProfile.roleLabel,
+    department: roleProfile.department,
+  }
+}
+
+function readStoredUser() {
+  try {
+    const raw = localStorage.getItem(STORED_USER_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    if (!parsed.loginName || !parsed.role || !parsed.roleLabel) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function persistAuthSession({ accessToken, refreshToken, user }) {
+  if (accessToken) {
+    localStorage.setItem('access_token', accessToken)
+  }
+  if (refreshToken) {
+    localStorage.setItem('refresh_token', refreshToken)
+  }
+  if (user) {
+    localStorage.setItem(STORED_USER_KEY, JSON.stringify(user))
+  }
+}
+
+function clearAuthSession() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem(STORED_USER_KEY)
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = String(token || '').split('.')[1]
+    if (!payload) return null
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+    const json = decodeURIComponent(
+      Array.from(atob(padded))
+        .map((char) => `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`)
+        .join('')
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
+
+function buildUserFromAccessToken(accessToken) {
+  const payload = decodeJwtPayload(accessToken)
+  if (!payload?.role_name) return null
+  const loginName = payload.sub ? `用户${payload.sub}` : '已登录用户'
+  return buildClientUser(
+    {
+      login_name: loginName,
+      real_name: loginName,
+      role_name: payload.role_name,
+    },
+    { loginName, roleName: payload.role_name }
+  )
+}
+
+async function restoreAuthSession() {
+  const storedUser = readStoredUser()
+  const refreshToken = localStorage.getItem('refresh_token')
+
+  if (!refreshToken) {
+    clearAuthSession()
+    authHydrating.value = false
+    return
+  }
+
+  try {
+    const refreshed = await refreshAccessToken(refreshToken)
+    persistAuthSession({
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token || refreshToken,
+    })
+    const nextUser = storedUser || buildUserFromAccessToken(refreshed.access_token)
+    if (!nextUser) {
+      throw new Error('无法恢复用户信息')
+    }
+    persistAuthSession({ user: nextUser })
+    currentUser.value = nextUser
+    activePage.value = 'main'
+    await loadExamList()
+  } catch (err) {
+    console.warn('恢复登录状态失败：', err)
+    clearAuthSession()
+    currentUser.value = null
+  } finally {
+    authHydrating.value = false
+  }
+}
+
+onMounted(() => {
+  restoreAuthSession()
+})
+
 // 登录
 async function handleLogin(payload) {
   const { username, password, roleName } = payload
@@ -96,28 +233,15 @@ async function handleLogin(payload) {
       roleName,
     })
     const user = data.user || {}
-    const roleKey = user.role_name || roleName
-    const roleProfile = ROLE_PROFILE_MAP[roleKey] || {
-      role: 'unknown',
-      roleLabel: roleKey || '未知角色',
-      department: '未分配',
-    }
-
-    currentUser.value = {
-      loginName: user.login_name,
-      displayName: user.real_name || user.login_name || username,
-      role: roleProfile.role,
-      roleLabel: roleProfile.roleLabel,
-      department: roleProfile.department,
-    }
+    const nextUser = buildClientUser(user, { loginName: username, roleName })
+    currentUser.value = nextUser
     activePage.value = 'main'
 
-    if (data.access_token) {
-      localStorage.setItem('access_token', data.access_token)
-    }
-    if (data.refresh_token) {
-      localStorage.setItem('refresh_token', data.refresh_token)
-    }
+    persistAuthSession({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      user: nextUser,
+    })
     await loadExamList()
   } catch (err) {
     loginError.value = err?.message || '登录失败，请重试'
@@ -129,8 +253,7 @@ function handleLogout() {
   currentUser.value = null
   loginError.value = ''
   activePage.value = 'main'
-  localStorage.removeItem('access_token')
-  localStorage.removeItem('refresh_token')
+  clearAuthSession()
   if (previewUrl.value) {
     URL.revokeObjectURL(previewUrl.value)
   }
@@ -139,6 +262,10 @@ function handleLogout() {
   examList.value = []
   activeExamIndex.value = -1
   currentUploadFile.value = null
+  currentImageBlob.value = null
+  currentImageSha256.value = ''
+  currentDraftXrayId.value = null
+  currentDraftPatientId.value = ''
 }
 
 /** ===== 权限：主治医生只读 ===== */
@@ -148,13 +275,32 @@ const canEdit = computed(() => {
 })
 
 /** ===== 主界面状态 ===== */
+const DEFAULT_GENERATION_MOCK_VERSION = 'v1.0'
+const GENERATION_MOCK_VERSION_STORAGE_KEY = 'generation_mock_version'
+const V1_GENERATION_DELAY_MS = 5000
+const V2_GENERATION_DELAY_MS = 8000
+
+function getStoredGenerationMockVersion() {
+  if (typeof localStorage === 'undefined') return DEFAULT_GENERATION_MOCK_VERSION
+  const stored = localStorage.getItem(GENERATION_MOCK_VERSION_STORAGE_KEY)
+  return stored === 'v2.0' ? 'v2.0' : DEFAULT_GENERATION_MOCK_VERSION
+}
+
 const previewUrl = ref('')
 const loading = ref(false)
 const report = ref(null)
 const activeExamIndex = ref(-1)
-const uploadCount = ref(0)
-const currentMockReportIndex = ref(0)
 const currentUploadFile = ref(null)
+const currentImageBlob = ref(null)
+const currentImageSha256 = ref('')
+const currentDraftXrayId = ref(null)
+const currentDraftPatientId = ref('')
+const selectedGenerationModelVersion = ref(getStoredGenerationMockVersion())
+
+const currentMaskXrayId = computed(() => {
+  if (currentDraftXrayId.value) return currentDraftXrayId.value
+  return examList.value[activeExamIndex.value]?.xrayId || null
+})
 
 // 检查列表（后端 xray_info 表）
 const examList = ref([])
@@ -234,7 +380,7 @@ async function loadExamList() {
 }
 
 
-const MOCK_REPORTS = [
+const V1_MOCK_REPORTS = [
   {
     patientInfo: {
       name: '',
@@ -244,13 +390,19 @@ const MOCK_REPORTS = [
     },
     positiveFindings: [
       {
-        diseaseName: 'fracture',
+        diseaseName: 'pulmonary_nodule',
         probabilityLevel: '2',
-        severity: '轻度',
-        location: 'posterior left ribs',
+        severity: 'moderate',
+        location: 'right upper lung',
+      },
+      {
+        diseaseName: 'pleural_effusion',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'left pleura',
       },
     ],
-    negativeFindings: ['pleural_effusion', 'pneumothorax'],
+    negativeFindings: [],
   },
   {
     patientInfo: {
@@ -261,22 +413,22 @@ const MOCK_REPORTS = [
     },
     positiveFindings: [
       {
-        diseaseName: 'consolidation',
+        diseaseName: 'cardiomegaly',
         probabilityLevel: '2',
-        severity: '轻度',
-        location: 'left lung base',
-      },
-      {
-        diseaseName: 'pleural_thickening',
-        probabilityLevel: '2',
-        severity: '轻度',
-        location: 'bilateral apical',
+        severity: 'moderate',
+        location: 'heart',
       },
       {
         diseaseName: 'calcification',
         probabilityLevel: '2',
-        severity: '轻度',
+        severity: 'mild',
         location: 'aortic arch',
+      },
+      {
+        diseaseName: 'pneumonia',
+        probabilityLevel: '2',
+        severity: 'moderate',
+        location: 'left lower lung',
       },
     ],
     negativeFindings: [],
@@ -289,7 +441,7 @@ const MOCK_REPORTS = [
       examDate: '',
     },
     positiveFindings: [],
-    negativeFindings: ['pneumothorax'],
+    negativeFindings: [],
   },
   {
     patientInfo: {
@@ -300,13 +452,19 @@ const MOCK_REPORTS = [
     },
     positiveFindings: [
       {
-        diseaseName: 'atelectasis',
-        probabilityLevel: '1',
-        severity: '轻度',
+        diseaseName: 'pneumonia',
+        probabilityLevel: '2',
+        severity: 'moderate',
         location: 'left lower lung',
       },
+      {
+        diseaseName: 'elevated_hemidiaphragm',
+        probabilityLevel: '3',
+        severity: 'mild',
+        location: 'left hemidiaphragm',
+      },
     ],
-    negativeFindings: ['pleural_effusion', 'pneumonia', 'pneumothorax'],
+    negativeFindings: [],
   },
   {
     patientInfo: {
@@ -319,17 +477,49 @@ const MOCK_REPORTS = [
       {
         diseaseName: 'atelectasis',
         probabilityLevel: '2',
-        severity: '轻度',
-        location: 'left base',
+        severity: 'moderate',
+        location: 'left lung base',
       },
       {
         diseaseName: 'tortuosity_of_the_thoracic_aorta',
         probabilityLevel: '2',
-        severity: '轻度',
-        location: 'aorta',
+        severity: 'mild',
+        location: 'thoracic aorta',
+      },
+      {
+        diseaseName: 'pneumothorax',
+        probabilityLevel: '1',
+        severity: 'mild',
+        location: 'right pleura',
       },
     ],
-    negativeFindings: ['pleural_effusion', 'edema', 'pneumothorax'],
+    negativeFindings: [],
+  },
+]
+
+const V2_MOCK_REPORTS = [
+  {
+    patientInfo: {
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
+    },
+    positiveFindings: [
+      {
+        diseaseName: 'fracture',
+        probabilityLevel: '2',
+        severity: 'moderate',
+        location: 'left posterior ribs',
+      },
+      {
+        diseaseName: 'pneumonia',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'right lower lung',
+      },
+    ],
+    negativeFindings: [],
   },
   {
     patientInfo: {
@@ -340,37 +530,176 @@ const MOCK_REPORTS = [
     },
     positiveFindings: [
       {
-        diseaseName: 'blunting_of_costophrenic_angle',
-        probabilityLevel: '1',
-        severity: '轻度',
-        location: 'left costophrenic angle',
+        diseaseName: 'consolidation',
+        probabilityLevel: '3',
+        severity: 'moderate',
+        location: 'left lower lung',
+      },
+      {
+        diseaseName: 'cardiomegaly',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'heart',
       },
       {
         diseaseName: 'pleural_effusion',
-        probabilityLevel: '3',
-        severity: '未知',
-        location: 'bilateral',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'left pleura',
       },
     ],
-    negativeFindings: ['pneumothorax'],
+    negativeFindings: [],
+  },
+  {
+    patientInfo: {
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
+    },
+    positiveFindings: [
+      {
+        diseaseName: 'consolidation',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'right lower lung',
+      },
+    ],
+    negativeFindings: [],
+  },
+  {
+    patientInfo: {
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
+    },
+    positiveFindings: [
+      {
+        diseaseName: 'atelectasis',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'left lower lung',
+      },
+      {
+        diseaseName: 'elevated_hemidiaphragm',
+        probabilityLevel: '2',
+        severity: 'moderate',
+        location: 'left diaphragm',
+      },
+    ],
+    negativeFindings: [],
+  },
+  {
+    patientInfo: {
+      name: '',
+      gender: '',
+      age: '',
+      examDate: '',
+    },
+    positiveFindings: [
+      {
+        diseaseName: 'emphysema',
+        probabilityLevel: '2',
+        severity: 'severe',
+        location: 'bilateral lungs',
+      },
+      {
+        diseaseName: 'edema',
+        probabilityLevel: '2',
+        severity: 'mild',
+        location: 'bilateral lungs',
+      },
+    ],
+    negativeFindings: [],
   },
 ]
 
-function pickMockReportByIndex(index) {
-  const total = MOCK_REPORTS.length
-  if (total === 0) return null
-  // 前两次上传固定使用报告 0 和 1，之后从报告 2~5 中随机选取
-  if (index <= 1) {
-    return JSON.parse(JSON.stringify(MOCK_REPORTS[index]))
+const MOCK_REPORT_SETS = {
+  'v1.0': V1_MOCK_REPORTS,
+  'v2.0': V2_MOCK_REPORTS,
+}
+
+const TEST_IMAGE_HASH_TO_MOCK_INDEX = Object.freeze({
+  // backend/test_img/1.png
+  '0f00f928b004c27d7e27d0ffe70844599b8df741a4f24f14d08a8d9981f6963f': 0,
+  // backend/test_img/2.png
+  a3be043830487c09fff62d09f6cfe6ae676693e74dbed934281bd69be7aec04a: 1,
+  // backend/test_img/3.jpg
+  '1b5713dc45d09282268bd79c97a61dbb29e436d0d6c441660f7418ed6b270d58': 2,
+  // backend/test_img/4.jpg
+  '8855c44330fe411aa415eacc3707102ad7c87bf2136315de1717ad299f08e874': 3,
+  // backend/test_img/5.jpg
+  '72c624c43f4534cc516cfaf8dc048293d73b0063574cbfa6b68813d792a63ba1': 4,
+})
+
+function cloneReport(reportData) {
+  return JSON.parse(JSON.stringify(reportData))
+}
+
+function resolveGenerationMockVersion(model) {
+  const raw = [
+    model?.model_name,
+    model?.model_version,
+    model?.model_desc,
+  ].filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, '')
+
+  if (/(^|[^a-z0-9])v2\.0([^0-9]|$)|(^|[^0-9])2\.0([^0-9]|$)/.test(raw)) return 'v2.0'
+  if (/(^|[^a-z0-9])v1\.0([^0-9]|$)|(^|[^0-9])1\.0([^0-9]|$)/.test(raw)) return 'v1.0'
+  return DEFAULT_GENERATION_MOCK_VERSION
+}
+
+function handleGenerationModelDefaultChanged(model) {
+  const version = resolveGenerationMockVersion(model)
+  selectedGenerationModelVersion.value = version
+  localStorage.setItem(GENERATION_MOCK_VERSION_STORAGE_KEY, version)
+}
+
+function getActiveMockReports() {
+  return MOCK_REPORT_SETS[selectedGenerationModelVersion.value] || MOCK_REPORT_SETS[DEFAULT_GENERATION_MOCK_VERSION]
+}
+
+async function calculateSha256(blob) {
+  if (!blob) {
+    throw new Error('未找到当前胸片文件，无法匹配 Mock 报告')
   }
-  const randomIndex = 2 + Math.floor(Math.random() * (total - 2))
-  return JSON.parse(JSON.stringify(MOCK_REPORTS[randomIndex]))
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('当前浏览器不支持 SHA-256 哈希计算，无法匹配 Mock 报告')
+  }
+
+  const buffer = await blob.arrayBuffer()
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', buffer)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+async function pickMockReportByCurrentImage() {
+  const hash = await calculateSha256(currentImageBlob.value)
+  currentImageSha256.value = hash
+  const mockIndex = TEST_IMAGE_HASH_TO_MOCK_INDEX[hash]
+  if (mockIndex === undefined) {
+    throw new Error('当前影像未命中内置 Mock 图文哈希，请使用已内置的 5 张测试图之一')
+  }
+
+  const activeReports = getActiveMockReports()
+  const matchedReport = activeReports[mockIndex]
+  if (!matchedReport) {
+    throw new Error(`当前生成模型 ${selectedGenerationModelVersion.value} 缺少第 ${mockIndex + 1} 条 Mock 数据`)
+  }
+  return cloneReport(matchedReport)
 }
 
 function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+function getGenerationDelayMs() {
+  return selectedGenerationModelVersion.value === 'v2.0'
+    ? V2_GENERATION_DELAY_MS
+    : V1_GENERATION_DELAY_MS
 }
 
 const TERM_TRANSLATION_MAP = {
@@ -558,6 +887,10 @@ async function loadExamDetail(index) {
     }
     previewUrl.value = URL.createObjectURL(originalBlob)
     currentUploadFile.value = null
+    currentImageBlob.value = originalBlob
+    currentImageSha256.value = ''
+    currentDraftXrayId.value = null
+    currentDraftPatientId.value = ''
 
     const reportList = Array.isArray(reports) ? reports : []
     const latestReport = reportList[0]
@@ -589,9 +922,12 @@ function setPreview(file) {
   }
   previewUrl.value = URL.createObjectURL(file)
   currentUploadFile.value = file
+  currentImageBlob.value = file
+  currentImageSha256.value = ''
+  currentDraftXrayId.value = null
+  currentDraftPatientId.value = ''
+  activeExamIndex.value = -1
   report.value = null
-  currentMockReportIndex.value = uploadCount.value
-  uploadCount.value += 1
 }
 
 function handleFileSelected(file) {
@@ -609,17 +945,24 @@ async function handleGenerateReport() {
   if (!previewUrl.value || !canEdit.value) return
   loading.value = true
   report.value = null
-  const sampledReport = pickMockReportByIndex(currentMockReportIndex.value)
+  let sampledReport = null
+  const generationDelayMs = getGenerationDelayMs()
 
   try {
+    sampledReport = await pickMockReportByCurrentImage()
     const [localizedReport] = await Promise.all([
       localizeReportFindings(sampledReport),
-      sleep(5000),
+      sleep(generationDelayMs),
     ])
     report.value = localizedReport
   } catch (err) {
+    if (!sampledReport) {
+      console.error('Mock 报告匹配失败：', err)
+      alert(err?.message || 'Mock 报告匹配失败')
+      return
+    }
     console.error('翻译失败，回退展示原文：', err)
-    await sleep(5000)
+    await sleep(generationDelayMs)
     report.value = sampledReport
   } finally {
     loading.value = false
@@ -660,6 +1003,52 @@ function inferXrayFormat(file) {
   return ext || 'PNG'
 }
 
+function buildDraftPatientId() {
+  const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase()
+  return `FRONT${timestamp}${suffix}`
+}
+
+async function ensureXrayForOverlay({ patientInfo } = {}) {
+  const selected = examList.value[activeExamIndex.value]
+  if (selected?.xrayId) return selected.xrayId
+  if (currentDraftXrayId.value) return currentDraftXrayId.value
+  if (!currentUploadFile.value) {
+    throw new Error('请先上传胸片后再显示掩膜')
+  }
+
+  const patient = patientInfo || {}
+  const patientId = currentDraftPatientId.value || buildDraftPatientId()
+  const uploaded = await uploadXray({
+    file: currentUploadFile.value,
+    patientId,
+    patientName: String(patient.name || '').trim() || '未命名',
+    patientGender: normalizeGenderToCode(patient.gender),
+    patientAge: normalizeAgeToNumber(patient.age),
+    xrayFormat: inferXrayFormat(currentUploadFile.value),
+  })
+
+  const xrayId = uploaded?.xray_id
+  if (!xrayId) {
+    throw new Error('后端未返回检查ID，无法加载掩膜')
+  }
+
+  currentDraftPatientId.value = patientId
+  currentDraftXrayId.value = xrayId
+
+  const nextExam = mapXrayToExamItem(uploaded)
+  const existingIndex = examList.value.findIndex((item) => item.xrayId === xrayId)
+  if (existingIndex >= 0) {
+    examList.value.splice(existingIndex, 1, nextExam)
+    activeExamIndex.value = existingIndex
+  } else {
+    examList.value = [nextExam, ...examList.value]
+    activeExamIndex.value = 0
+  }
+
+  return xrayId
+}
+
 function buildReportContent(payload) {
   const patient = payload?.patientInfo || {}
   const positives = Array.isArray(payload?.positiveFindings)
@@ -694,6 +1083,7 @@ async function handleSaveReport(payload) {
   try {
     const saved = await saveManualReport({
       file: currentUploadFile.value,
+      xrayId: currentDraftXrayId.value,
       patientName: String(patient.name || '').trim(),
       patientGender: normalizeGenderToCode(patient.gender),
       patientAge: normalizeAgeToNumber(patient.age),
@@ -704,6 +1094,11 @@ async function handleSaveReport(payload) {
 
     report.value = payload
     await loadExamList()
+    const savedXrayId = saved?.xray_id ?? currentDraftXrayId.value
+    const savedIndex = examList.value.findIndex((item) => item.xrayId === savedXrayId)
+    if (savedIndex >= 0) {
+      activeExamIndex.value = savedIndex
+    }
     alert(`保存成功（报告ID：${saved?.report_id ?? '未知'}）`)
   } catch (err) {
     console.error('保存报告失败：', err)
@@ -722,6 +1117,10 @@ function handleCreateExam() {
   loading.value = false
   activeExamIndex.value = -1
   currentUploadFile.value = null
+  currentImageBlob.value = null
+  currentImageSha256.value = ''
+  currentDraftXrayId.value = null
+  currentDraftPatientId.value = ''
 }
 </script>
 
@@ -733,5 +1132,14 @@ function handleCreateExam() {
   background: #f3f4f6;
   font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei',
     system-ui, sans-serif;
+}
+
+.app-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #475569;
+  font-size: 14px;
 }
 </style>

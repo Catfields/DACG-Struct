@@ -65,7 +65,22 @@ def _serialize_segment_result(segment):
     }
 
 
+def _is_placeholder_segment(segment) -> bool:
+    return segment is not None and segment.model_version == "manual-mock"
+
+
+def _is_real_segment(segment) -> bool:
+    return segment is not None and not _is_placeholder_segment(segment)
+
+
+def _require_real_segment(segment):
+    if not segment or _is_placeholder_segment(segment):
+        raise AppException("SEGMENT_NOT_READY", "真实分割结果尚未生成", status_code=404)
+    return segment
+
+
 def _build_mask_coordinates_payload(xray_id: int, segment):
+    _require_real_segment(segment)
     mask_path = Path(segment.mask_path)
     if not mask_path.exists():
         raise AppException("MASK_NOT_FOUND", "Mask 图片不存在", status_code=404)
@@ -194,6 +209,8 @@ async def upload_xray(
         operation_status=1,
     )
 
+    xray_service.update_status(db, xray.xray_id, 1)
+    db.refresh(xray)
     asyncio.create_task(_run_segmentation_pipeline(xray.xray_id, xray.xray_original_path, request.app))
     return _serialize_xray_out(xray)
 
@@ -215,16 +232,14 @@ async def get_xray_detail(xray_id: int, db: Session = Depends(get_db), current_u
 @router.get("/{xray_id}/mask")
 async def get_mask(xray_id: int, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN))):
     segment = xray_service.get_segment_result(db, xray_id)
-    if not segment:
-        raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    _require_real_segment(segment)
     return FileResponse(segment.mask_path)
 
 
 @router.get("/{xray_id}/views")
 async def get_views(xray_id: int, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN))):
     segment = xray_service.get_segment_result(db, xray_id)
-    if not segment:
-        raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    _require_real_segment(segment)
     mask_coordinates = _build_mask_coordinates_payload(xray_id, segment)
     return {
         "mask_path": segment.mask_path,
@@ -243,8 +258,7 @@ async def get_mask_coordinates(
     current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
 ):
     segment = xray_service.get_segment_result(db, xray_id)
-    if not segment:
-        raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    _require_real_segment(segment)
     return _build_mask_coordinates_payload(xray_id, segment)
 
 
@@ -255,7 +269,11 @@ async def get_segment_status(
     current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
 ):
     xray = xray_service.get_xray(db, xray_id)
-    return {"segment_status": xray.segment_status}
+    segment = xray_service.get_segment_result(db, xray_id)
+    segment_status = xray.segment_status
+    if segment_status == 2 and not _is_real_segment(segment):
+        segment_status = 0
+    return {"segment_status": segment_status}
 
 
 @router.post("/{xray_id}/segment")
@@ -273,7 +291,8 @@ async def trigger_segmentation(
         # Only block if real segmentation exists (not placeholder)
         if segment and segment.model_version != "manual-mock":
             raise AppException("SEGMENT_ALREADY_EXISTS", "分割结果已存在", status_code=400)
-    
+
+    xray_service.update_status(db, xray_id, 1)
     asyncio.create_task(_run_segmentation_pipeline(xray_id, xray.xray_original_path, request.app))
     return {"message": "分割任务已启动", "xray_id": xray_id}
 
@@ -285,8 +304,7 @@ async def get_visualization(
     current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
 ):
     segment = xray_service.get_segment_result(db, xray_id)
-    if not segment:
-        raise AppException("SEGMENT_NOT_FOUND", "分割结果不存在", status_code=404)
+    _require_real_segment(segment)
 
     visualization_path = Path(build_visualization_path(xray_id))
     if not visualization_path.exists():

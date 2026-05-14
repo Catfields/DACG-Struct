@@ -36,6 +36,12 @@ export async function loginWithPassword({ loginName, password, roleName }) {
   })
 }
 
+export async function refreshAccessToken(refreshToken) {
+  return postJson('/auth/refresh', {
+    refresh_token: refreshToken,
+  })
+}
+
 export async function changePassword({ oldPassword, newPassword }) {
   const token = localStorage.getItem('access_token')
   if (!token) {

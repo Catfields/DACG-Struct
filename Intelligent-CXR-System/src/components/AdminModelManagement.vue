@@ -42,14 +42,14 @@
       </div>
     </section>
 
-    <!-- 当前默认模型概览 -->
+    <!-- 当前使用模型概览 -->
     <section class="default-overview">
       <div class="default-card">
-        <span class="default-card-label">当前默认分割模型</span>
+        <span class="default-card-label">当前使用分割模型</span>
         <span class="default-card-value">{{ defaultSegmentModel || '未设置' }}</span>
       </div>
       <div class="default-card">
-        <span class="default-card-label">当前默认生成模型</span>
+        <span class="default-card-label">当前使用生成模型</span>
         <span class="default-card-value">{{ defaultGenerationModel || '未设置' }}</span>
       </div>
     </section>
@@ -91,7 +91,7 @@
                   v-if="item.is_default === 1"
                   class="status-badge default"
                 >
-                  ★ 默认
+                  ★ 使用
                 </span>
                 <span v-else class="status-badge inactive">备用</span>
               </td>
@@ -103,7 +103,7 @@
                     class="toolbar-btn mini primary"
                     @click="onSetDefault(item)"
                   >
-                    设为默认
+                    设为使用
                   </button>
                   <button
                     class="toolbar-btn mini danger"
@@ -148,7 +148,7 @@
             </select>
           </div>
           <div class="form-item">
-            <label class="label">设为默认</label>
+            <label class="label">设为使用</label>
             <select v-model="createForm.is_default" class="form-input">
               <option :value="0">否</option>
               <option :value="1">是</option>
@@ -197,7 +197,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['back', 'logout'])
+const emit = defineEmits(['back', 'logout', 'generation-model-default-changed'])
 
 /** ===== 状态 ===== */
 const models = ref([])
@@ -223,7 +223,7 @@ const filteredModels = computed(() => {
   })
 })
 
-/** ===== 默认模型概览 ===== */
+/** ===== 使用模型概览 ===== */
 const defaultSegmentModel = computed(() => {
   const m = models.value.find((m) => m.model_type === 1 && m.is_default === 1)
   return m ? `${m.model_name} (${m.model_version})` : ''
@@ -248,6 +248,7 @@ async function loadModels() {
     isError.value = false
     const data = await listModels()
     models.value = Array.isArray(data) ? data : []
+    emitDefaultGenerationModel()
   } catch (err) {
     statusMessage.value = err?.message || '加载模型列表失败'
     isError.value = true
@@ -256,6 +257,13 @@ async function loadModels() {
 }
 
 onMounted(loadModels)
+
+function emitDefaultGenerationModel() {
+  const model = models.value.find((m) => m.model_type === 2 && m.is_default === 1)
+  if (model) {
+    emit('generation-model-default-changed', model)
+  }
+}
 
 /** ===== 新增模型 ===== */
 const createDialogVisible = ref(false)
@@ -309,7 +317,7 @@ async function onSubmitCreate() {
   }
 }
 
-/** ===== 设为默认 ===== */
+/** ===== 设为使用 ===== */
 const confirmDialogVisible = ref(false)
 const confirmTitle = ref('')
 const confirmMessage = ref('')
@@ -317,14 +325,14 @@ let pendingAction = null
 
 function onSetDefault(item) {
   const typeLabel = item.model_type === 1 ? '分割模型' : '生成模型'
-  confirmTitle.value = '切换默认模型'
-  confirmMessage.value = `确定将 ${typeLabel}「${item.model_name} (${item.model_version})」设为默认吗？${
+  confirmTitle.value = '切换使用模型'
+  confirmMessage.value = `确定将 ${typeLabel}「${item.model_name} (${item.model_version})」设为使用吗？${
     item.model_type === 1 ? '分割模型切换将触发热重载。' : ''
   }`
   pendingAction = async () => {
     try {
       await setDefaultModel(item.model_id)
-      statusMessage.value = `已将「${item.model_version}」设为默认${typeLabel}`
+      statusMessage.value = `已将「${item.model_version}」设为使用${typeLabel}`
       isError.value = false
       await loadModels()
     } catch (err) {
@@ -471,7 +479,7 @@ async function onConfirmAction() {
   cursor: not-allowed;
 }
 
-/* 默认模型概览卡片 */
+/* 使用模型概览卡片 */
 .default-overview {
   display: flex;
   gap: 12px;

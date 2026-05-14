@@ -209,6 +209,39 @@ def _build_manual_patient_id() -> str:
     return f"MANUAL{ts}{suffix}"
 
 
+def _parse_manual_upload_time(exam_date: str | None) -> datetime:
+    if not exam_date:
+        return datetime.now()
+    try:
+        return datetime.strptime(exam_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise AppException("INVALID_EXAM_DATE", "检查日期格式应为 YYYY-MM-DD", status_code=400) from exc
+
+
+def _get_or_create_manual_segment(db: Session, xray: XrayInfo) -> SegmentResult:
+    segment = db.execute(
+        select(SegmentResult).where(SegmentResult.xray_id == xray.xray_id)
+    ).scalar_one_or_none()
+    if segment:
+        return segment
+
+    original_path = xray.xray_original_path
+    segment = SegmentResult(
+        xray_id=xray.xray_id,
+        mask_path=original_path,
+        left_lung_view_path=original_path,
+        right_lung_view_path=original_path,
+        heart_view_path=original_path,
+        heart_area=None,
+        left_lung_area=None,
+        right_lung_area=None,
+        model_version="manual-mock",
+    )
+    db.add(segment)
+    db.flush()
+    return segment
+
+
 def manual_save_report(
     db: Session,
     *,
@@ -220,50 +253,51 @@ def manual_save_report(
     report_content: str,
     upload_file,
     upload_user_id: int,
+    xray_id: int | None = None,
 ) -> ReportInfo:
     content = str(report_content or "").strip()
     if not content:
         raise AppException("EMPTY_REPORT", "报告内容不能为空", status_code=400)
 
-    upload_time = datetime.now()
-    if exam_date:
-        try:
-            upload_time = datetime.strptime(exam_date, "%Y-%m-%d")
-        except ValueError as exc:
-            raise AppException("INVALID_EXAM_DATE", "检查日期格式应为 YYYY-MM-DD", status_code=400) from exc
-
-    patient_id = _build_manual_patient_id()
-    file_path = save_upload(upload_file, patient_id)
+    upload_time = _parse_manual_upload_time(exam_date)
 
     try:
-        xray = XrayInfo(
-            patient_id=patient_id,
-            patient_name=patient_name,
-            patient_gender=patient_gender,
-            patient_age=patient_age,
-            xray_original_path=file_path,
-            xray_format=xray_format or "PNG",
-            upload_user_id=upload_user_id,
-            upload_time=upload_time,
-            segment_status=0,  # Set to pending so real segmentation can be triggered on-demand
-        )
-        db.add(xray)
-        db.flush()
+        if xray_id is not None:
+            xray = db.get(XrayInfo, xray_id)
+            if not xray:
+                raise AppException("XRAY_NOT_FOUND", "影像不存在", status_code=404)
 
-        # 手工保存报告时没有分割流水，写入占位分割记录以满足 report_info 外键约束。
-        segment = SegmentResult(
-            xray_id=xray.xray_id,
-            mask_path=file_path,
-            left_lung_view_path=file_path,
-            right_lung_view_path=file_path,
-            heart_view_path=file_path,
-            heart_area=None,
-            left_lung_area=None,
-            right_lung_area=None,
-            model_version="manual-mock",
-        )
-        db.add(segment)
-        db.flush()
+            xray.patient_name = patient_name
+            xray.patient_gender = patient_gender
+            xray.patient_age = patient_age
+            xray.xray_format = xray_format or xray.xray_format or "PNG"
+            if exam_date:
+                xray.upload_time = upload_time
+            db.add(xray)
+            db.flush()
+        else:
+            if upload_file is None:
+                raise AppException("XRAY_FILE_REQUIRED", "请先上传胸片文件", status_code=400)
+            patient_id = _build_manual_patient_id()
+            file_path = save_upload(upload_file, patient_id)
+
+            xray = XrayInfo(
+                patient_id=patient_id,
+                patient_name=patient_name,
+                patient_gender=patient_gender,
+                patient_age=patient_age,
+                xray_original_path=file_path,
+                xray_format=xray_format or "PNG",
+                upload_user_id=upload_user_id,
+                upload_time=upload_time,
+                segment_status=0,  # Set to pending so real segmentation can be triggered on-demand
+            )
+            db.add(xray)
+            db.flush()
+
+        # 手工保存报告时如果真实分割尚未完成，写入占位分割记录以满足 report_info 外键约束。
+        # 分割流水完成后会用真实结果覆盖 manual-mock 记录。
+        segment = _get_or_create_manual_segment(db, xray)
 
         report = ReportInfo(
             xray_id=xray.xray_id,

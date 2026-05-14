@@ -31,6 +31,14 @@
         >
           模型管理
         </button>
+        <button
+          v-if="isAdmin"
+          class="logout-btn"
+          type="button"
+          @click="onOpenLogAudit"
+        >
+          日志审计
+        </button>
         <button class="logout-btn" @click="onLogoutClick">退出</button>
       </div>
     </header>
@@ -201,16 +209,16 @@
             @click="onGenerate"
           >
             <span v-if="!loading">生成结构化诊断报告</span>
-            <span v-else>分析中...</span>
+            <span v-else>{{ generateButtonLoadingText }}</span>
           </button>
           <button
             class="toolbar-btn secondary"
             :disabled="overlayLoading"
             @click="onToggleOverlay"
-            :title="currentXrayId ? '显示AI分割结果' : '显示示例遮罩'"
+            :title="currentXrayId ? '显示AI分割结果' : '上传并显示AI分割结果'"
           >
             <span v-if="overlayLoading">加载中...</span>
-            <span v-else>{{ overlayVisible ? '隐藏遮罩' : '显示遮罩' }}</span>
+            <span v-else>{{ overlayVisible ? '隐藏掩膜' : '显示掩膜' }}</span>
           </button>
           <span class="role-tip" v-if="!canEdit">
             当前角色：主治医生，仅可查看报告，不能生成或修改。
@@ -254,7 +262,7 @@
 
         <div v-if="loading" class="loading-box">
           <div class="spinner"></div>
-          <p>正在分析胸片，请稍候...</p>
+          <p>{{ loadingMessage }}</p>
         </div>
 
         <div v-else-if="previewUrl || report" class="report-content">
@@ -330,7 +338,7 @@
                   <div class="finding-sub">
                     可能性等级：{{ item.probabilityLevel }}
                   </div>
-                  <div class="finding-sub">严重程度：{{ item.severity }}</div>
+                  <div class="finding-sub">严重程度：{{ formatSeverity(item.severity) }}</div>
                   <div class="finding-sub">解剖位置：{{ item.location }}</div>
                 </li>
               </ul>
@@ -364,10 +372,10 @@
                         <option value="">请选择</option>
                         <option
                           v-for="level in severityOptions"
-                          :key="level"
-                          :value="level"
+                          :key="level.value"
+                          :value="level.value"
                         >
-                          {{ level }}
+                          {{ level.label }}
                         </option>
                       </select>
                     </label>
@@ -474,7 +482,7 @@
                     <li v-for="(item, i) in viewReport.positiveFindings" :key="i">
                       疾病名称：{{ item.diseaseName }}；可能性等级：{{
                         item.probabilityLevel
-                      }}；严重程度：{{ item.severity }}；解剖位置：{{
+                      }}；严重程度：{{ formatSeverity(item.severity) }}；解剖位置：{{
                         item.location
                       }}
                     </li>
@@ -592,6 +600,10 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  currentXrayId: {
+    type: [Number, String],
+    default: null,
+  },
   previewUrl: {
     type: String,
     default: '',
@@ -604,12 +616,21 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  generationModelVersion: {
+    type: String,
+    default: 'v1.0',
+  },
+  ensureXrayForOverlay: {
+    type: Function,
+    default: null,
+  },
 })
 
 const emit = defineEmits([
   'logout',
   'open-user-management',
   'open-model-management',
+  'open-log-audit',
   'select-exam',
   'file-selected',
   'file-dropped',
@@ -620,14 +641,9 @@ const emit = defineEmits([
 
 const isAdmin = computed(() => props.currentUser?.role === 'admin')
 
-// Get current X-ray ID for AI segmentation
 const currentXrayId = computed(() => {
-  // For uploaded files, we need to handle differently
-  if (props.previewUrl && !props.examList[props.activeExamIndex]) {
-    return null // Uploaded file not yet saved
-  }
-  const currentExam = props.examList[props.activeExamIndex]
-  return currentExam?.xrayId || null
+  const value = Number(props.currentXrayId)
+  return Number.isFinite(value) && value > 0 ? value : null
 })
 
 const searchForm = ref({
@@ -679,6 +695,10 @@ function onOpenUserManagement() {
 
 function onOpenModelManagement() {
   emit('open-model-management')
+}
+
+function onOpenLogAudit() {
+  emit('open-log-audit')
 }
 
 function onSelectExamRow(index) {
@@ -756,13 +776,43 @@ const imageStageRef = ref(null)
 const previewImgRef = ref(null)
 const activeOrgan = ref(null)
 const pointerState = ref(null)
+const maskRequestedForCurrentImage = ref(false)
+const reportGenerationActive = ref(false)
+const reportLoadingText = ref('生成报告中')
+const REPORT_SEGMENTING_DISPLAY_MS = 1200
+let reportPhaseTimer = null
 const MAGNIFIER_SIZE = 180
 const MAGNIFIER_PANEL_WIDTH = 204
 const MAGNIFIER_PANEL_HEIGHT = 230
 const MAGNIFIER_ZOOM = 2.35
 const genderOptions = ['男', '女']
 const probabilityOptions = ['1', '2', '3']
-const severityOptions = ['未知', '轻度', '中度', '重度']
+const severityOptions = [
+  { value: 'unknown', label: '未知' },
+  { value: 'mild', label: '轻度' },
+  { value: 'moderate', label: '中度' },
+  { value: 'severe', label: '重度' },
+]
+const SEVERITY_VALUE_MAP = {
+  unknown: 'unknown',
+  mild: 'mild',
+  moderate: 'moderate',
+  severe: 'severe',
+  未知: 'unknown',
+  轻度: 'mild',
+  中度: 'moderate',
+  重度: 'severe',
+}
+const SEVERITY_LABEL_MAP = {
+  unknown: '未知',
+  mild: '轻度',
+  moderate: '中度',
+  severe: '重度',
+  未知: '未知',
+  轻度: '轻度',
+  中度: '中度',
+  重度: '重度',
+}
 const showChangePasswordModal = ref(false)
 const oldPassword = ref('')
 const newPassword = ref('')
@@ -777,6 +827,32 @@ const basicInfo = ref({
 })
 const editableReport = ref(null)
 const viewReport = computed(() => editableReport.value || props.report)
+
+function normalizeSeverityValue(severity) {
+  const raw = String(severity || '').trim()
+  if (!raw) return ''
+  return SEVERITY_VALUE_MAP[raw] || SEVERITY_VALUE_MAP[raw.toLowerCase()] || raw
+}
+
+function formatSeverity(severity) {
+  const raw = String(severity || '').trim()
+  if (!raw) return ''
+  return SEVERITY_LABEL_MAP[raw] || SEVERITY_LABEL_MAP[raw.toLowerCase()] || raw
+}
+
+function normalizeReportForEditing(report) {
+  const cloned = JSON.parse(JSON.stringify(report))
+  cloned.positiveFindings = Array.isArray(cloned.positiveFindings)
+    ? cloned.positiveFindings.map((item) => ({
+      ...item,
+      severity: normalizeSeverityValue(item?.severity),
+    }))
+    : []
+  cloned.negativeFindings = Array.isArray(cloned.negativeFindings)
+    ? cloned.negativeFindings
+    : []
+  return cloned
+}
 const isBasicInfoComplete = computed(() => {
   const info = basicInfo.value || {}
   return (
@@ -829,6 +905,43 @@ const magnifierContentStyle = computed(() => {
     transform: `translate(${offsetX}px, ${offsetY}px) scale(${MAGNIFIER_ZOOM})`,
   }
 })
+const generateButtonLoadingText = computed(() => (
+  reportGenerationActive.value ? reportLoadingText.value : '加载中...'
+))
+const loadingMessage = computed(() => (
+  reportGenerationActive.value ? reportLoadingText.value : '正在加载检查详情，请稍候...'
+))
+const shouldShowReportSegmentationPhase = computed(() => (
+  props.generationModelVersion === 'v2.0' && !maskRequestedForCurrentImage.value
+))
+
+function clearReportPhaseTimer() {
+  if (reportPhaseTimer !== null) {
+    clearTimeout(reportPhaseTimer)
+    reportPhaseTimer = null
+  }
+}
+
+function resetReportLoadingPresentation() {
+  clearReportPhaseTimer()
+  reportGenerationActive.value = false
+  reportLoadingText.value = '生成报告中'
+}
+
+function startReportLoadingPresentation() {
+  clearReportPhaseTimer()
+  reportGenerationActive.value = true
+  if (!shouldShowReportSegmentationPhase.value) {
+    reportLoadingText.value = '生成报告中'
+    return
+  }
+
+  reportLoadingText.value = '分割中'
+  reportPhaseTimer = setTimeout(() => {
+    reportLoadingText.value = '生成报告中'
+    reportPhaseTimer = null
+  }, REPORT_SEGMENTING_DISPLAY_MS)
+}
 
 watch(
   () => props.report,
@@ -849,11 +962,26 @@ watch(
         examDate: String(patient.examDate || ''),
       }
     }
-    editableReport.value = report
-      ? JSON.parse(JSON.stringify(report))
-      : null
+    editableReport.value = report ? normalizeReportForEditing(report) : null
   },
   { immediate: true }
+)
+
+watch(
+  () => props.loading,
+  (isLoading) => {
+    if (!isLoading) {
+      resetReportLoadingPresentation()
+    }
+  }
+)
+
+watch(
+  () => props.previewUrl,
+  () => {
+    maskRequestedForCurrentImage.value = false
+    resetReportLoadingPresentation()
+  }
 )
 
 function onFileChange(e) {
@@ -869,7 +997,8 @@ function onDrop(e) {
 }
 
 function onGenerate() {
-  if (!props.canEdit) return
+  if (!props.canEdit || !props.previewUrl || props.loading) return
+  startReportLoadingPresentation()
   emit('generate-report')
 }
 
@@ -994,10 +1123,32 @@ async function onToggleOverlay() {
     return
   }
 
-  const xrayId = currentXrayId.value
+  maskRequestedForCurrentImage.value = true
+  let xrayId = currentXrayId.value
   if (!xrayId) {
-    overlayError.value = '请先选择检查记录'
-    return
+    if (!props.previewUrl || !props.canEdit || typeof props.ensureXrayForOverlay !== 'function') {
+      overlayError.value = '请先上传或选择检查记录'
+      return
+    }
+
+    overlayLoading.value = true
+    overlayError.value = '正在创建检查并启动分割，请稍候...'
+    try {
+      xrayId = await props.ensureXrayForOverlay({
+        patientInfo: {
+          name: basicInfo.value.name,
+          gender: basicInfo.value.gender,
+          age: basicInfo.value.age,
+          examDate: basicInfo.value.examDate,
+        },
+      })
+      await nextTick()
+    } catch (err) {
+      console.error('创建检查失败:', err)
+      overlayError.value = err.message || '创建检查失败，无法加载掩膜'
+      overlayLoading.value = false
+      return
+    }
   }
 
   if (overlayUrl.value && overlayXrayId.value === xrayId && maskCoordinates.value) {
@@ -1195,7 +1346,10 @@ function onSaveReport() {
       age: basicInfo.value.age || '',
       examDate: basicInfo.value.examDate || '',
     },
-    positiveFindings: editableReport.value.positiveFindings || [],
+    positiveFindings: (editableReport.value.positiveFindings || []).map((item) => ({
+      ...item,
+      severity: formatSeverity(item?.severity),
+    })),
     negativeFindings: editableReport.value.negativeFindings || [],
   }
   emit('save-report', payload)
@@ -1317,6 +1471,7 @@ watch(currentXrayId, () => {
 })
 
 onUnmounted(() => {
+  clearReportPhaseTimer()
   resetOverlay(false)
 })
 </script>
@@ -1348,6 +1503,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   font-size: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .user-dropdown {
   position: relative;
@@ -2022,6 +2179,17 @@ onUnmounted(() => {
 
 /* 小屏适配 */
 @media (max-width: 1100px) {
+  .top-bar {
+    height: auto;
+    min-height: 54px;
+    padding: 8px 12px;
+    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .user-area {
+    justify-content: flex-start;
+  }
   .main-layout {
     grid-template-columns: 1fr;
   }

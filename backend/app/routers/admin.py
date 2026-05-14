@@ -1,9 +1,10 @@
 from datetime import datetime
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from app.dependencies import get_db
 from app.core.permissions import require_roles, RoleName
+from app.schemas.log import OperationLogPageOut
 from app.schemas.model import ModelCreate, ModelOut
 from app.models.operation_log import OperationLog
 from app.services import model_service, log_service
@@ -13,10 +14,33 @@ from app.core.exceptions import AppException
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-@router.get("/logs")
+def _parse_log_time(value: str | None, label: str) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AppException(
+            "INVALID_LOG_TIME",
+            f"{label}格式无效",
+            detail="请使用 ISO 日期时间格式，例如 2026-03-17T08:00:00",
+            status_code=400,
+        ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
+
+
+@router.get("/logs", response_model=OperationLogPageOut)
 async def list_logs(
     user_id: int | None = None,
+    user_name: str | None = None,
     operation_type: str | None = None,
+    operation_status: int | None = None,
+    keyword: str | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
     page: int = 1,
@@ -24,18 +48,48 @@ async def list_logs(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(RoleName.ADMIN)),
 ):
-    stmt = select(OperationLog)
-    if user_id:
-        stmt = stmt.where(OperationLog.user_id == user_id)
-    if operation_type:
-        stmt = stmt.where(OperationLog.operation_type == operation_type)
-    if start_time:
-        stmt = stmt.where(OperationLog.operation_time >= start_time)
-    if end_time:
-        stmt = stmt.where(OperationLog.operation_time <= end_time)
+    page = max(page, 1)
+    size = min(max(size, 1), 100)
+    start_dt = _parse_log_time(start_time, "开始时间")
+    end_dt = _parse_log_time(end_time, "结束时间")
+
+    conditions = []
+    if user_id is not None:
+        conditions.append(OperationLog.user_id == user_id)
+    user_name_value = user_name.strip() if user_name else ""
+    operation_type_value = operation_type.strip() if operation_type else ""
+    keyword_value = keyword.strip() if keyword else ""
+
+    if user_name_value:
+        conditions.append(OperationLog.user_name.like(f"%{user_name_value}%"))
+    if operation_type_value:
+        conditions.append(OperationLog.operation_type == operation_type_value)
+    if operation_status is not None:
+        conditions.append(OperationLog.operation_status == operation_status)
+    if start_dt:
+        conditions.append(OperationLog.operation_time >= start_dt)
+    if end_dt:
+        conditions.append(OperationLog.operation_time <= end_dt)
+    if keyword_value:
+        pattern = f"%{keyword_value}%"
+        conditions.append(
+            or_(
+                OperationLog.user_name.like(pattern),
+                OperationLog.operation_type.like(pattern),
+                OperationLog.operation_content.like(pattern),
+                OperationLog.ip_address.like(pattern),
+            )
+        )
+
+    stmt = select(OperationLog).where(*conditions)
+    total = db.execute(
+        select(func.count()).select_from(OperationLog).where(*conditions)
+    ).scalar_one()
     offset = (page - 1) * size
-    logs = db.execute(stmt.order_by(OperationLog.operation_time.desc()).offset(offset).limit(size)).scalars().all()
-    return logs
+    logs = db.execute(
+        stmt.order_by(OperationLog.operation_time.desc()).offset(offset).limit(size)
+    ).scalars().all()
+    return {"items": logs, "total": total, "page": page, "size": size}
 
 
 @router.get("/models", response_model=list[ModelOut])
