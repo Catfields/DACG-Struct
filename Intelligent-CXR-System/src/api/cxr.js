@@ -183,6 +183,7 @@ export async function uploadXray({
 
 export async function saveManualReport({
   file,
+  reportId,
   xrayId,
   patientName,
   patientGender,
@@ -194,6 +195,9 @@ export async function saveManualReport({
   const form = new FormData()
   if (file) {
     form.append('file', file)
+  }
+  if (reportId !== null && reportId !== undefined) {
+    form.append('report_id', String(reportId))
   }
   if (xrayId !== null && xrayId !== undefined) {
     form.append('xray_id', String(xrayId))
@@ -208,7 +212,9 @@ export async function saveManualReport({
   if (examDate) {
     form.append('exam_date', examDate)
   }
-  form.append('xray_format', xrayFormat || 'PNG')
+  if (xrayFormat) {
+    form.append('xray_format', xrayFormat)
+  }
   form.append('report_content', reportContent || '')
   return requestForm('/reports/manual-save', form, 'POST')
 }

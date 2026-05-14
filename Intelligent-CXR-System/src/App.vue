@@ -266,6 +266,7 @@ function handleLogout() {
   currentImageSha256.value = ''
   currentDraftXrayId.value = null
   currentDraftPatientId.value = ''
+  currentReportId.value = null
 }
 
 /** ===== 权限：主治医生只读 ===== */
@@ -295,6 +296,7 @@ const currentImageBlob = ref(null)
 const currentImageSha256 = ref('')
 const currentDraftXrayId = ref(null)
 const currentDraftPatientId = ref('')
+const currentReportId = ref(null)
 const selectedGenerationModelVersion = ref(getStoredGenerationMockVersion())
 
 const currentMaskXrayId = computed(() => {
@@ -637,6 +639,21 @@ function cloneReport(reportData) {
   return JSON.parse(JSON.stringify(reportData))
 }
 
+function normalizePatientInfo(patientInfo = {}) {
+  return {
+    name: String(patientInfo.name || ''),
+    gender: String(patientInfo.gender || ''),
+    age: String(patientInfo.age || ''),
+    examDate: String(patientInfo.examDate || ''),
+  }
+}
+
+function attachPatientInfoToReport(reportData, patientInfo) {
+  const cloned = cloneReport(reportData || {})
+  cloned.patientInfo = normalizePatientInfo(patientInfo)
+  return cloned
+}
+
 function resolveGenerationMockVersion(model) {
   const raw = [
     model?.model_name,
@@ -874,6 +891,7 @@ async function loadExamDetail(index) {
   const selected = examList.value[index]
   if (!selected) return
 
+  currentReportId.value = null
   loading.value = true
   try {
     const xrayId = selected.xrayId
@@ -894,6 +912,7 @@ async function loadExamDetail(index) {
 
     const reportList = Array.isArray(reports) ? reports : []
     const latestReport = reportList[0]
+    currentReportId.value = latestReport?.report_id ?? null
     report.value = latestReport
       ? parseReportFromContent(latestReport.report_content, selected)
       : null
@@ -926,6 +945,7 @@ function setPreview(file) {
   currentImageSha256.value = ''
   currentDraftXrayId.value = null
   currentDraftPatientId.value = ''
+  currentReportId.value = null
   activeExamIndex.value = -1
   report.value = null
 }
@@ -941,11 +961,11 @@ function handleFileDropped(file) {
 }
 
 // 调用“生成报告”
-async function handleGenerateReport() {
+async function handleGenerateReport(payload = {}) {
   if (!previewUrl.value || !canEdit.value) return
   loading.value = true
-  report.value = null
   let sampledReport = null
+  const patientInfo = normalizePatientInfo(payload?.patientInfo)
   const generationDelayMs = getGenerationDelayMs()
 
   try {
@@ -954,7 +974,7 @@ async function handleGenerateReport() {
       localizeReportFindings(sampledReport),
       sleep(generationDelayMs),
     ])
-    report.value = localizedReport
+    report.value = attachPatientInfoToReport(localizedReport, patientInfo)
   } catch (err) {
     if (!sampledReport) {
       console.error('Mock 报告匹配失败：', err)
@@ -963,7 +983,7 @@ async function handleGenerateReport() {
     }
     console.error('翻译失败，回退展示原文：', err)
     await sleep(generationDelayMs)
-    report.value = sampledReport
+    report.value = attachPatientInfoToReport(sampledReport, patientInfo)
   } finally {
     loading.value = false
   }
@@ -1074,8 +1094,10 @@ function buildReportContent(payload) {
 
 async function handleSaveReport(payload) {
   if (!canEdit.value) return
-  if (!currentUploadFile.value) {
-    alert('请先上传胸片后再保存报告')
+  const selectedXrayId = examList.value[activeExamIndex.value]?.xrayId || null
+  const xrayId = currentDraftXrayId.value || selectedXrayId
+  if (!currentUploadFile.value && !xrayId && !currentReportId.value) {
+    alert('请先上传或选择一条带胸片的检查记录后再保存报告')
     return
   }
 
@@ -1083,18 +1105,20 @@ async function handleSaveReport(payload) {
   try {
     const saved = await saveManualReport({
       file: currentUploadFile.value,
-      xrayId: currentDraftXrayId.value,
+      reportId: currentReportId.value,
+      xrayId,
       patientName: String(patient.name || '').trim(),
       patientGender: normalizeGenderToCode(patient.gender),
       patientAge: normalizeAgeToNumber(patient.age),
       examDate: String(patient.examDate || '').trim(),
-      xrayFormat: inferXrayFormat(currentUploadFile.value),
+      xrayFormat: currentUploadFile.value ? inferXrayFormat(currentUploadFile.value) : null,
       reportContent: buildReportContent(payload),
     })
 
+    currentReportId.value = saved?.report_id ?? currentReportId.value
     report.value = payload
     await loadExamList()
-    const savedXrayId = saved?.xray_id ?? currentDraftXrayId.value
+    const savedXrayId = saved?.xray_id ?? xrayId
     const savedIndex = examList.value.findIndex((item) => item.xrayId === savedXrayId)
     if (savedIndex >= 0) {
       activeExamIndex.value = savedIndex
@@ -1121,6 +1145,7 @@ function handleCreateExam() {
   currentImageSha256.value = ''
   currentDraftXrayId.value = null
   currentDraftPatientId.value = ''
+  currentReportId.value = null
 }
 </script>
 

@@ -260,12 +260,12 @@
           </button>
         </div>
 
-        <div v-if="loading" class="loading-box">
+        <div v-if="showFullReportLoading" class="loading-box">
           <div class="spinner"></div>
           <p>{{ loadingMessage }}</p>
         </div>
 
-        <div v-else-if="previewUrl || report" class="report-content">
+        <div v-else-if="previewUrl || report || showInlineReportLoading" class="report-content">
           <!-- 基本信息 -->
           <div class="report-section">
             <h3>基本信息</h3>
@@ -315,8 +315,13 @@
             </div>
           </div>
 
+          <div v-if="showInlineReportLoading" class="loading-box inline-loading-box">
+            <div class="spinner"></div>
+            <p>{{ loadingMessage }}</p>
+          </div>
+
           <!-- 阳性发现和阴性发现 - 仅在生成报告后显示 -->
-          <template v-if="report">
+          <template v-else-if="report">
             <!-- 阳性发现 -->
             <div class="report-section">
               <div class="section-header">
@@ -911,6 +916,12 @@ const generateButtonLoadingText = computed(() => (
 const loadingMessage = computed(() => (
   reportGenerationActive.value ? reportLoadingText.value : '正在加载检查详情，请稍候...'
 ))
+const showInlineReportLoading = computed(() => (
+  props.loading && reportGenerationActive.value
+))
+const showFullReportLoading = computed(() => (
+  props.loading && !reportGenerationActive.value
+))
 const shouldShowReportSegmentationPhase = computed(() => (
   props.generationModelVersion === 'v2.0' && !maskRequestedForCurrentImage.value
 ))
@@ -999,7 +1010,14 @@ function onDrop(e) {
 function onGenerate() {
   if (!props.canEdit || !props.previewUrl || props.loading) return
   startReportLoadingPresentation()
-  emit('generate-report')
+  emit('generate-report', {
+    patientInfo: {
+      name: basicInfo.value.name || '',
+      gender: basicInfo.value.gender || '',
+      age: basicInfo.value.age || '',
+      examDate: basicInfo.value.examDate || '',
+    },
+  })
 }
 
 function onCreateExam() {
@@ -1968,6 +1986,11 @@ onUnmounted(() => {
   border-top-color: #2563eb;
   animation: spin 0.7s linear infinite;
   margin-bottom: 10px;
+}
+.inline-loading-box {
+  min-height: 180px;
+  border-top: 1px dashed #e5e7eb;
+  margin-top: 12px;
 }
 @keyframes spin {
   to {

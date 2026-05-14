@@ -249,10 +249,11 @@ def manual_save_report(
     patient_gender: int | None,
     patient_age: int | None,
     exam_date: str | None,
-    xray_format: str,
+    xray_format: str | None,
     report_content: str,
     upload_file,
     upload_user_id: int,
+    report_id: int | None = None,
     xray_id: int | None = None,
 ) -> ReportInfo:
     content = str(report_content or "").strip()
@@ -260,6 +261,15 @@ def manual_save_report(
         raise AppException("EMPTY_REPORT", "报告内容不能为空", status_code=400)
 
     upload_time = _parse_manual_upload_time(exam_date)
+    target_report = None
+
+    if report_id is not None:
+        target_report = db.get(ReportInfo, report_id)
+        if not target_report:
+            raise AppException("REPORT_NOT_FOUND", "报告不存在", status_code=404)
+        if xray_id is not None and target_report.xray_id != xray_id:
+            raise AppException("REPORT_XRAY_MISMATCH", "报告与影像记录不匹配", status_code=400)
+        xray_id = target_report.xray_id
 
     try:
         if xray_id is not None:
@@ -298,6 +308,22 @@ def manual_save_report(
         # 手工保存报告时如果真实分割尚未完成，写入占位分割记录以满足 report_info 外键约束。
         # 分割流水完成后会用真实结果覆盖 manual-mock 记录。
         segment = _get_or_create_manual_segment(db, xray)
+
+        if target_report is None and xray_id is not None:
+            target_report = db.execute(
+                select(ReportInfo)
+                .where(ReportInfo.xray_id == xray.xray_id)
+                .order_by(ReportInfo.generate_time.desc())
+            ).scalars().first()
+
+        if target_report is not None:
+            target_report.segment_id = segment.segment_id
+            target_report.report_content = content
+            target_report.report_pdf_path = None
+            db.add(target_report)
+            db.commit()
+            db.refresh(target_report)
+            return target_report
 
         report = ReportInfo(
             xray_id=xray.xray_id,
