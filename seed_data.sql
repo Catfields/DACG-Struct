@@ -19,7 +19,8 @@ INSERT INTO `user` (`user_id`, `login_name`, `login_flag`, `pwd`, `real_name`) V
 INSERT INTO `model_manage` (`model_id`, `model_name`, `model_version`, `model_type`, `model_path`, `is_default`, `create_user_id`, `create_time`, `model_desc`, `system_id`) VALUES
   (1, 'U-Net', 'unet-v1.2.0', 1, '/models/unet/v1.2.0/model.pth', 1, 4, '2026-03-11 10:00:00', '基于U-Net的胸部X光片分割模型', 1),
   (2, 'U-Net', 'unet-v1.1.0', 1, '/models/unet/v1.1.0/model.pth', 0, 4, '2026-03-01 10:00:00', '历史版本模型', 1),
-  (3, 'ResNet-50', 'resnet50-feat-v1.0.0', 2, '/models/resnet50/v1.0.0/model.pth', 0, 4, '2026-03-05 11:30:00', '特征提取模型', 1);
+  (3, 'ResNet-50', 'resnet50-feat-v1.0.0', 2, '/models/resnet50/v1.0.0/model.pth', 0, 4, '2026-03-05 11:30:00', '特征提取模型', 1),
+  (4, 'Attention U-Net', 'attention-unet-v1.0', 1, '/data/home/zyx/Ir-UNet/DACG/DACG-Struct/backend/ml_models/seg_models/attention_unet_model.pth', 0, 4, '2026-03-18 10:14:00', '基于 Attention U-Net 的胸部X光片分割模型', 1);
 
 -- xray info
 INSERT INTO `xray_info` (`xray_id`, `patient_id`, `patient_name`, `patient_gender`, `patient_age`, `xray_original_path`, `xray_format`, `upload_user_id`, `upload_time`, `segment_status`, `update_time`, `system_id`) VALUES
