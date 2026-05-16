@@ -134,6 +134,51 @@ CREATE TABLE IF NOT EXISTS `report_info` (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='结构化诊断报告表';
 
+-- Table: report_history
+CREATE TABLE IF NOT EXISTS `report_history` (
+  `history_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '报告历史ID（主键，自增）',
+  `report_id` BIGINT NOT NULL COMMENT '关联报告ID（report_info.report_id）',
+  `xray_id` BIGINT NOT NULL COMMENT '关联X光片ID（xray_info.xray_id）',
+  `segment_id` BIGINT NOT NULL COMMENT '关联分割结果ID（segment_result.segment_id）',
+  `parent_history_id` BIGINT NULL COMMENT '上一版报告历史ID，用于形成追溯链条',
+  `action_type` VARCHAR(50) NOT NULL COMMENT '动作类型：baseline/backend_generate/frontend_generate/manual_save/manual_revision/audit/audit_revision/pdf_export',
+  `action_user_id` BIGINT NULL COMMENT '执行动作的用户ID（关联 user.user_id）',
+  `action_time` DATETIME NOT NULL COMMENT '动作发生时间',
+  `action_note` VARCHAR(255) NULL COMMENT '动作备注',
+  `report_content` TEXT NOT NULL COMMENT '该历史版本的报告正文快照',
+  `revise_content` TEXT NULL COMMENT '该历史版本的修订内容快照',
+  `report_pdf_path` VARCHAR(255) NULL COMMENT '该历史版本的PDF路径快照',
+  `generate_time` DATETIME NULL COMMENT '该历史版本对应的报告生成时间',
+  `audit_status` SMALLINT NOT NULL COMMENT '该历史版本的审核状态快照',
+  `audit_user_id` BIGINT NULL COMMENT '该历史版本的审核医生ID',
+  `audit_time` DATETIME NULL COMMENT '该历史版本的审核时间',
+  `system_id` BIGINT NULL COMMENT '系统编号',
+  PRIMARY KEY (`history_id`),
+  KEY `idx_report_history_report_id` (`report_id`),
+  KEY `idx_report_history_xray_id` (`xray_id`),
+  KEY `idx_report_history_parent_id` (`parent_history_id`),
+  KEY `idx_report_history_action_time` (`action_time`),
+  KEY `idx_report_history_action_user_id` (`action_user_id`),
+  CONSTRAINT `fk_report_history_report`
+    FOREIGN KEY (`report_id`) REFERENCES `report_info` (`report_id`)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT `fk_report_history_xray`
+    FOREIGN KEY (`xray_id`) REFERENCES `xray_info` (`xray_id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT `fk_report_history_segment`
+    FOREIGN KEY (`segment_id`) REFERENCES `segment_result` (`segment_id`)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT `fk_report_history_parent`
+    FOREIGN KEY (`parent_history_id`) REFERENCES `report_history` (`history_id`)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT `fk_report_history_action_user`
+    FOREIGN KEY (`action_user_id`) REFERENCES `user` (`user_id`)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT `fk_report_history_audit_user`
+    FOREIGN KEY (`audit_user_id`) REFERENCES `user` (`user_id`)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='结构化诊断报告历史快照表';
+
 -- Table: model_manage
 CREATE TABLE IF NOT EXISTS `model_manage` (
   `model_id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '模型ID（主键，自增）',

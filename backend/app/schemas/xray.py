@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.segment import SegmentResultOut
 
 
@@ -22,3 +22,20 @@ class XrayOut(BaseModel):
 class XrayDetail(BaseModel):
     xray: XrayOut
     segment_result: SegmentResultOut | None = None
+
+
+class XrayPageOut(BaseModel):
+    items: list[XrayOut]
+    total: int
+    page: int
+    size: int
+
+
+class XrayBatchDeleteRequest(BaseModel):
+    xray_ids: list[int] = Field(..., min_length=1)
+
+
+class XrayDeleteResult(BaseModel):
+    deleted_ids: list[int]
+    not_found_ids: list[int]
+    deleted_count: int

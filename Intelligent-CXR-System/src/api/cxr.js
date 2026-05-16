@@ -116,12 +116,37 @@ async function requestForm(path, formData, method = 'POST') {
   return data
 }
 
-export async function fetchXrayList({ page = 1, size = 50 } = {}) {
-  const search = new URLSearchParams({
-    page: String(page),
-    size: String(size),
+export async function fetchXrayList(params = {}) {
+  const {
+    page = 1,
+    size = 50,
+    patientId,
+    patientName,
+    keyword,
+    segmentStatus,
+    startTime,
+    endTime,
+  } = params
+  const search = new URLSearchParams()
+  search.set('page', String(page))
+  search.set('size', String(size))
+  const optionalParams = {
+    patient_id: patientId,
+    patient_name: patientName,
+    keyword,
+    segment_status: segmentStatus,
+    start_time: startTime,
+    end_time: endTime,
+  }
+  Object.entries(optionalParams).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return
+    search.set(key, String(value))
   })
   return requestJson(`/xray/?${search.toString()}`)
+}
+
+export async function fetchXrayDetail(xrayId) {
+  return requestJson(`/xray/${xrayId}`)
 }
 
 export async function fetchReportsByXrayId(xrayId) {
@@ -131,6 +156,10 @@ export async function fetchReportsByXrayId(xrayId) {
     size: '20',
   })
   return requestJson(`/reports/?${search.toString()}`)
+}
+
+export async function fetchReportHistory(reportId) {
+  return requestJson(`/reports/${reportId}/history`)
 }
 
 export async function fetchXrayVisualizationBlob(xrayId) {
@@ -147,6 +176,22 @@ export async function fetchXrayMaskCoordinates(xrayId) {
 
 export async function fetchXrayOriginalBlob(xrayId) {
   return requestBlob(`/xray/${xrayId}/original`)
+}
+
+export async function deleteXray(xrayId) {
+  return requestJson(`/xray/${xrayId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function batchDeleteXrays(xrayIds) {
+  return requestJson('/xray/batch', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      xray_ids: xrayIds,
+    }),
+  })
 }
 
 export async function fetchSegmentStatus(xrayId) {
@@ -191,6 +236,7 @@ export async function saveManualReport({
   examDate,
   xrayFormat,
   reportContent,
+  actionType,
 }) {
   const form = new FormData()
   if (file) {
@@ -214,6 +260,9 @@ export async function saveManualReport({
   }
   if (xrayFormat) {
     form.append('xray_format', xrayFormat)
+  }
+  if (actionType) {
+    form.append('action_type', actionType)
   }
   form.append('report_content', reportContent || '')
   return requestForm('/reports/manual-save', form, 'POST')

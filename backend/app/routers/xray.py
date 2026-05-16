@@ -1,12 +1,13 @@
 import asyncio
 import logging
+from datetime import date, datetime, time
 from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.dependencies import get_db
 from app.core.permissions import require_roles, RoleName
-from app.schemas.xray import XrayDetail, XrayOut
+from app.schemas.xray import XrayBatchDeleteRequest, XrayDeleteResult, XrayDetail, XrayOut, XrayPageOut
 from app.services import xray_service, log_service, generation_service, translation_service, model_service
 from app.services import segmentation_service
 from app.database import SessionLocal
@@ -28,6 +29,29 @@ def _format_datetime_value(value):
     if isinstance(value, str):
         return value
     return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _parse_xray_time(value: str | None, label: str, is_end: bool = False) -> datetime | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        if len(raw) == 10:
+            parsed_date = date.fromisoformat(raw)
+            return datetime.combine(parsed_date, time.max if is_end else time.min)
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AppException(
+            "INVALID_XRAY_TIME",
+            f"{label}格式无效",
+            detail="请使用 ISO 日期时间格式，例如 2026-03-17T08:00:00",
+            status_code=400,
+        ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.replace(tzinfo=None)
+    return parsed
 
 
 def _serialize_xray_out(xray):
@@ -222,6 +246,46 @@ async def get_overlay_sample():
     return FileResponse(str(OVERLAY_SAMPLE_PATH))
 
 
+@router.delete("/batch", response_model=XrayDeleteResult)
+async def batch_delete_xrays(
+    payload: XrayBatchDeleteRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
+):
+    result = xray_service.delete_xrays(db, payload.xray_ids)
+    await log_service.write(
+        db=db,
+        user_id=current_user.user_id,
+        user_name=current_user.real_name,
+        operation_type="影像记录删除",
+        operation_content=f"批量删除影像记录 {result['deleted_ids']}",
+        ip_address=request.client.host if request.client else None,
+        operation_status=1,
+    )
+    return result
+
+
+@router.delete("/{xray_id}", response_model=XrayDeleteResult)
+async def delete_xray(
+    xray_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
+):
+    result = xray_service.delete_xrays(db, [xray_id], require_all=True)
+    await log_service.write(
+        db=db,
+        user_id=current_user.user_id,
+        user_name=current_user.real_name,
+        operation_type="影像记录删除",
+        operation_content=f"删除影像记录 {xray_id}",
+        ip_address=request.client.host if request.client else None,
+        operation_status=1,
+    )
+    return result
+
+
 @router.get("/{xray_id}", response_model=XrayDetail)
 async def get_xray_detail(xray_id: int, db: Session = Depends(get_db), current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN))):
     xray = xray_service.get_xray(db, xray_id)
@@ -325,9 +389,12 @@ async def get_original_xray(
     return FileResponse(str(original_path))
 
 
-@router.get("/", response_model=list[XrayOut])
+@router.get("/", response_model=XrayPageOut)
 async def list_xrays(
     patient_id: str | None = None,
+    patient_name: str | None = None,
+    keyword: str | None = None,
+    segment_status: int | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
     page: int = 1,
@@ -335,5 +402,26 @@ async def list_xrays(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN, RoleName.ATTENDING)),
 ):
-    xrays = xray_service.list_xrays(db, patient_id, start_time, end_time, page, size)
-    return [_serialize_xray_out(xray) for xray in xrays]
+    page = max(page, 1)
+    size = min(max(size, 1), 100)
+    start_dt = _parse_xray_time(start_time, "开始时间")
+    end_dt = _parse_xray_time(end_time, "结束时间", is_end=True)
+    if start_dt and end_dt and start_dt > end_dt:
+        raise AppException("INVALID_XRAY_TIME_RANGE", "开始时间不能晚于结束时间", status_code=400)
+    xrays, total, page, size = xray_service.list_xrays(
+        db,
+        patient_id=patient_id,
+        patient_name=patient_name,
+        keyword=keyword,
+        segment_status=segment_status,
+        start_time=start_dt,
+        end_time=end_dt,
+        page=page,
+        size=size,
+    )
+    return {
+        "items": [_serialize_xray_out(xray) for xray in xrays],
+        "total": total,
+        "page": page,
+        "size": size,
+    }

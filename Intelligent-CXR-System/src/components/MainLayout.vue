@@ -13,32 +13,40 @@
           </span>
           <div class="dropdown-menu">
             <button class="dropdown-item" @click="onChangePasswordClick">修改密码</button>
+            <button
+              v-if="canManageXrayRecords"
+              class="dropdown-item"
+              type="button"
+              @click="onOpenXrayRecords"
+            >
+              影像记录
+            </button>
+            <button
+              v-if="isAdmin"
+              class="dropdown-item"
+              type="button"
+              @click="onOpenUserManagement"
+            >
+              用户管理
+            </button>
+            <button
+              v-if="isAdmin"
+              class="dropdown-item"
+              type="button"
+              @click="onOpenModelManagement"
+            >
+              模型管理
+            </button>
+            <button
+              v-if="isAdmin"
+              class="dropdown-item"
+              type="button"
+              @click="onOpenLogAudit"
+            >
+              日志审计
+            </button>
           </div>
         </div>
-        <button
-          v-if="isAdmin"
-          class="logout-btn"
-          type="button"
-          @click="onOpenUserManagement"
-        >
-          用户管理
-        </button>
-        <button
-          v-if="isAdmin"
-          class="logout-btn"
-          type="button"
-          @click="onOpenModelManagement"
-        >
-          模型管理
-        </button>
-        <button
-          v-if="isAdmin"
-          class="logout-btn"
-          type="button"
-          @click="onOpenLogAudit"
-        >
-          日志审计
-        </button>
         <button class="logout-btn" @click="onLogoutClick">退出</button>
       </div>
     </header>
@@ -636,6 +644,7 @@ const emit = defineEmits([
   'open-user-management',
   'open-model-management',
   'open-log-audit',
+  'open-xray-records',
   'select-exam',
   'file-selected',
   'file-dropped',
@@ -645,6 +654,9 @@ const emit = defineEmits([
 ])
 
 const isAdmin = computed(() => props.currentUser?.role === 'admin')
+const canManageXrayRecords = computed(() => (
+  props.currentUser?.role === 'admin' || props.currentUser?.role === 'radiologist'
+))
 
 const currentXrayId = computed(() => {
   const value = Number(props.currentXrayId)
@@ -704,6 +716,10 @@ function onOpenModelManagement() {
 
 function onOpenLogAudit() {
   emit('open-log-audit')
+}
+
+function onOpenXrayRecords() {
+  emit('open-xray-records')
 }
 
 function onSelectExamRow(index) {
@@ -1541,7 +1557,7 @@ onUnmounted(() => {
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   z-index: 1000;
-  min-width: 120px;
+  min-width: 140px;
 }
 .dropdown-item {
   display: block;
@@ -1553,9 +1569,14 @@ onUnmounted(() => {
   font-size: 12px;
   color: #374151;
   text-align: left;
+  border-radius: 3px;
+  margin: 2px 4px;
+  width: calc(100% - 8px);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .dropdown-item:hover {
-  background: #f3f4f6;
+  background: #0ea5e9;
+  color: #fff;
 }
 .logout-btn {
   height: 28px;

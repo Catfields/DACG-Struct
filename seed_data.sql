@@ -57,6 +57,15 @@ INSERT INTO `report_info` (`report_id`, `xray_id`, `segment_id`, `report_content
   (5, 5, 5, '阳性发现：左下肺不张。阴性发现：未见局灶性实变。', '/data/report/2026/03/14/MRN20260314005.pdf', '2026-03-14 11:15:00', 1, 5, '2026-03-14 13:20:00', NULL, 1),
   (6, 6, 6, '阳性发现：间质纹理增多。阴性发现：未见明显实变。', '/data/report/2026/03/13/MRN20260313006.pdf', '2026-03-13 10:00:00', 1, 1, '2026-03-13 12:30:00', NULL, 1);
 
+-- report history baselines
+INSERT INTO `report_history` (`history_id`, `report_id`, `xray_id`, `segment_id`, `parent_history_id`, `action_type`, `action_user_id`, `action_time`, `action_note`, `report_content`, `revise_content`, `report_pdf_path`, `generate_time`, `audit_status`, `audit_user_id`, `audit_time`, `system_id`) VALUES
+  (1, 1, 1, 1, NULL, 'baseline', NULL, '2026-03-17 08:27:00', '初始演示报告快照', '阴性发现：未见急性心肺异常。阳性发现：轻度肺血管充盈。建议结合临床。', NULL, '/data/report/2026/03/17/MRN20260317001.pdf', '2026-03-17 08:27:00', 1, 5, '2026-03-17 10:05:00', 1),
+  (2, 2, 2, 2, NULL, 'baseline', NULL, '2026-03-17 09:22:00', '初始演示报告快照', '阳性发现：右下叶片状致密影，考虑感染。阴性发现：未见胸腔积液。', NULL, '/data/report/2026/03/17/MRN20260317002.pdf', '2026-03-17 09:22:00', 0, NULL, NULL, 1),
+  (3, 3, 3, 3, NULL, 'baseline', NULL, '2026-03-16 16:45:00', '初始演示报告快照', '阳性发现：肺过度充气、膈肌变平。阴性发现：未见明显实变。', '建议补充肺功能检查。', '/data/report/2026/03/16/MRN20260316003.pdf', '2026-03-16 16:45:00', 1, 1, '2026-03-16 18:10:00', 1),
+  (4, 4, 4, 4, NULL, 'baseline', NULL, '2026-03-15 14:40:00', '初始演示报告快照', '阳性发现：心影增大。阴性发现：未见胸腔积液。', '请补充心脏超声结果后再评估。', '/data/report/2026/03/15/MRN20260315004.pdf', '2026-03-15 14:40:00', 2, 2, '2026-03-15 17:00:00', 1),
+  (5, 5, 5, 5, NULL, 'baseline', NULL, '2026-03-14 11:15:00', '初始演示报告快照', '阳性发现：左下肺不张。阴性发现：未见局灶性实变。', NULL, '/data/report/2026/03/14/MRN20260314005.pdf', '2026-03-14 11:15:00', 1, 5, '2026-03-14 13:20:00', 1),
+  (6, 6, 6, 6, NULL, 'baseline', NULL, '2026-03-13 10:00:00', '初始演示报告快照', '阳性发现：间质纹理增多。阴性发现：未见明显实变。', NULL, '/data/report/2026/03/13/MRN20260313006.pdf', '2026-03-13 10:00:00', 1, 1, '2026-03-13 12:30:00', 1);
+
 -- operation logs
 INSERT INTO `operation_log` (`log_id`, `user_id`, `user_name`, `operation_type`, `operation_content`, `operation_time`, `ip_address`, `operation_status`, `system_id`) VALUES
   (1, 1, '李明', 'X光片上传', '上传患者张晨的X光片', '2026-03-17 08:12:30', '10.0.0.11', 1, 1),

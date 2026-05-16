@@ -36,6 +36,15 @@
       @logout="handleLogout"
     />
 
+    <!-- 已登录：影像记录管理页 -->
+    <XrayRecordManagement
+      v-else-if="canManageXrayRecords && activePage === 'xray-records'"
+      :current-user="currentUser"
+      @records-changed="handleXrayRecordsChanged"
+      @back="activePage = 'main'"
+      @logout="handleLogout"
+    />
+
     <!-- 已登录：业务主界面 -->
     <MainLayout
       v-else
@@ -60,6 +69,7 @@
       @open-user-management="activePage = 'user-management'"
       @open-model-management="activePage = 'model-management'"
       @open-log-audit="activePage = 'log-audit'"
+      @open-xray-records="activePage = 'xray-records'"
     />
   </div>
 </template>
@@ -70,14 +80,17 @@ import LoginView from './components/LoginView.vue'
 import AdminUserManagement from './components/AdminUserManagement.vue'
 import AdminModelManagement from './components/AdminModelManagement.vue'
 import AdminLogAudit from './components/AdminLogAudit.vue'
+import XrayRecordManagement from './components/XrayRecordManagement.vue'
 import MainLayout from './components/MainLayout.vue'
 import { loginWithPassword, refreshAccessToken } from './api/auth'
 import { translateText } from './api/translation'
 import {
+  fetchSegmentStatus,
   fetchXrayList,
   fetchReportsByXrayId,
   fetchXrayOriginalBlob,
   saveManualReport,
+  triggerSegmentation,
   uploadXray,
 } from './api/cxr'
 
@@ -275,11 +288,18 @@ const canEdit = computed(() => {
   return currentUser.value.role !== 'physician'
 })
 
+const canManageXrayRecords = computed(() => {
+  if (!currentUser.value) return false
+  return currentUser.value.role === 'admin' || currentUser.value.role === 'radiologist'
+})
+
 /** ===== 主界面状态 ===== */
 const DEFAULT_GENERATION_MOCK_VERSION = 'v1.0'
 const GENERATION_MOCK_VERSION_STORAGE_KEY = 'generation_mock_version'
 const V1_GENERATION_DELAY_MS = 5000
 const V2_GENERATION_DELAY_MS = 8000
+const SEGMENTATION_POLL_INTERVAL_MS = 2000
+const SEGMENTATION_MAX_POLLS = 30
 
 function getStoredGenerationMockVersion() {
   if (typeof localStorage === 'undefined') return DEFAULT_GENERATION_MOCK_VERSION
@@ -654,6 +674,17 @@ function attachPatientInfoToReport(reportData, patientInfo) {
   return cloned
 }
 
+function resolveReportPatientInfo(patientInfo = {}) {
+  const normalized = normalizePatientInfo(patientInfo)
+  const selected = examList.value[activeExamIndex.value] || {}
+  return {
+    name: normalized.name || selected.name || '未命名',
+    gender: normalized.gender || selected.gender || '',
+    age: normalized.age || (selected.age ? String(selected.age) : ''),
+    examDate: normalized.examDate || selected.time || '',
+  }
+}
+
 function resolveGenerationMockVersion(model) {
   const raw = [
     model?.model_name,
@@ -965,26 +996,41 @@ async function handleGenerateReport(payload = {}) {
   if (!previewUrl.value || !canEdit.value) return
   loading.value = true
   let sampledReport = null
-  const patientInfo = normalizePatientInfo(payload?.patientInfo)
+  let nextReport = null
+  const patientInfo = resolveReportPatientInfo(payload?.patientInfo)
   const generationDelayMs = getGenerationDelayMs()
 
   try {
+    if (selectedGenerationModelVersion.value === 'v2.0') {
+      await ensureSegmentationBeforeV2Report(patientInfo)
+    }
+
     sampledReport = await pickMockReportByCurrentImage()
     const [localizedReport] = await Promise.all([
       localizeReportFindings(sampledReport),
       sleep(generationDelayMs),
     ])
-    report.value = attachPatientInfoToReport(localizedReport, patientInfo)
+    nextReport = attachPatientInfoToReport(localizedReport, patientInfo)
+    report.value = nextReport
   } catch (err) {
     if (!sampledReport) {
-      console.error('Mock 报告匹配失败：', err)
-      alert(err?.message || 'Mock 报告匹配失败')
+      console.error('生成报告准备失败：', err)
+      alert(err?.message || '生成报告准备失败')
       return
     }
     console.error('翻译失败，回退展示原文：', err)
     await sleep(generationDelayMs)
-    report.value = attachPatientInfoToReport(sampledReport, patientInfo)
+    nextReport = attachPatientInfoToReport(sampledReport, patientInfo)
+    report.value = nextReport
   } finally {
+    if (nextReport) {
+      try {
+        await persistGeneratedReport(nextReport)
+      } catch (err) {
+        console.error('保存生成报告历史失败：', err)
+        alert(err?.message || '生成报告已展示，但写入后端历史失败')
+      }
+    }
     loading.value = false
   }
 }
@@ -1029,12 +1075,12 @@ function buildDraftPatientId() {
   return `FRONT${timestamp}${suffix}`
 }
 
-async function ensureXrayForOverlay({ patientInfo } = {}) {
+async function ensureXrayRecord({ patientInfo, missingFileMessage, missingIdMessage } = {}) {
   const selected = examList.value[activeExamIndex.value]
   if (selected?.xrayId) return selected.xrayId
   if (currentDraftXrayId.value) return currentDraftXrayId.value
   if (!currentUploadFile.value) {
-    throw new Error('请先上传胸片后再显示掩膜')
+    throw new Error(missingFileMessage || '请先上传胸片')
   }
 
   const patient = patientInfo || {}
@@ -1050,7 +1096,7 @@ async function ensureXrayForOverlay({ patientInfo } = {}) {
 
   const xrayId = uploaded?.xray_id
   if (!xrayId) {
-    throw new Error('后端未返回检查ID，无法加载掩膜')
+    throw new Error(missingIdMessage || '后端未返回检查ID')
   }
 
   currentDraftPatientId.value = patientId
@@ -1067,6 +1113,55 @@ async function ensureXrayForOverlay({ patientInfo } = {}) {
   }
 
   return xrayId
+}
+
+async function ensureXrayForOverlay({ patientInfo } = {}) {
+  return ensureXrayRecord({
+    patientInfo,
+    missingFileMessage: '请先上传胸片后再显示掩膜',
+    missingIdMessage: '后端未返回检查ID，无法加载掩膜',
+  })
+}
+
+async function waitForSegmentationReady(xrayId) {
+  for (let pollCount = 0; pollCount < SEGMENTATION_MAX_POLLS; pollCount += 1) {
+    const pollData = await fetchSegmentStatus(xrayId)
+    const currentStatus = pollData.segment_status
+    if (currentStatus === 2) return
+    if (currentStatus === 3) {
+      throw new Error('分割失败，请重试')
+    }
+    await sleep(SEGMENTATION_POLL_INTERVAL_MS)
+  }
+  throw new Error('分割超时，请稍后重试')
+}
+
+async function startSegmentationIfNeeded(xrayId) {
+  try {
+    await triggerSegmentation(xrayId)
+  } catch (err) {
+    const errorCode = err?.payload?.error_code
+    if (errorCode === 'SEGMENT_ALREADY_EXISTS') return
+    if (errorCode === 'SEGMENT_IN_PROGRESS') return
+    throw err
+  }
+}
+
+async function ensureSegmentationBeforeV2Report(patientInfo) {
+  const xrayId = await ensureXrayRecord({
+    patientInfo,
+    missingFileMessage: '请先上传胸片后再生成报告',
+    missingIdMessage: '后端未返回检查ID，无法启动分割',
+  })
+  const statusData = await fetchSegmentStatus(xrayId)
+  const segmentStatus = statusData.segment_status
+
+  if (segmentStatus === 2) return
+  if (segmentStatus === 0 || segmentStatus === 3) {
+    await startSegmentationIfNeeded(xrayId)
+  }
+
+  await waitForSegmentationReady(xrayId)
 }
 
 function buildReportContent(payload) {
@@ -1092,6 +1187,48 @@ function buildReportContent(payload) {
   ].join('\n')
 }
 
+async function syncSavedReportState(saved, fallbackXrayId) {
+  currentReportId.value = saved?.report_id ?? currentReportId.value
+  const savedXrayId = saved?.xray_id ?? fallbackXrayId
+  const selectedXrayId = examList.value[activeExamIndex.value]?.xrayId || null
+  if (!selectedXrayId && savedXrayId) {
+    currentDraftXrayId.value = savedXrayId
+  }
+
+  await loadExamList()
+  const savedIndex = examList.value.findIndex((item) => item.xrayId === savedXrayId)
+  if (savedIndex >= 0) {
+    activeExamIndex.value = savedIndex
+  }
+}
+
+async function persistGeneratedReport(reportPayload) {
+  const selectedXrayId = examList.value[activeExamIndex.value]?.xrayId || null
+  const xrayId = currentDraftXrayId.value || selectedXrayId
+  if (!currentUploadFile.value && !xrayId && !currentReportId.value) {
+    throw new Error('请先上传或选择一条带胸片的检查记录后再生成报告')
+  }
+
+  const patient = resolveReportPatientInfo(reportPayload?.patientInfo)
+  const saved = await saveManualReport({
+    file: currentUploadFile.value,
+    reportId: currentReportId.value,
+    xrayId,
+    patientName: String(patient.name || '').trim(),
+    patientGender: normalizeGenderToCode(patient.gender),
+    patientAge: normalizeAgeToNumber(patient.age),
+    examDate: String(patient.examDate || '').trim(),
+    xrayFormat: currentUploadFile.value ? inferXrayFormat(currentUploadFile.value) : null,
+    reportContent: buildReportContent({
+      ...reportPayload,
+      patientInfo: patient,
+    }),
+    actionType: 'frontend_generate',
+  })
+
+  await syncSavedReportState(saved, xrayId)
+}
+
 async function handleSaveReport(payload) {
   if (!canEdit.value) return
   const selectedXrayId = examList.value[activeExamIndex.value]?.xrayId || null
@@ -1113,20 +1250,22 @@ async function handleSaveReport(payload) {
       examDate: String(patient.examDate || '').trim(),
       xrayFormat: currentUploadFile.value ? inferXrayFormat(currentUploadFile.value) : null,
       reportContent: buildReportContent(payload),
+      actionType: currentReportId.value ? 'manual_revision' : 'manual_save',
     })
 
-    currentReportId.value = saved?.report_id ?? currentReportId.value
     report.value = payload
-    await loadExamList()
-    const savedXrayId = saved?.xray_id ?? xrayId
-    const savedIndex = examList.value.findIndex((item) => item.xrayId === savedXrayId)
-    if (savedIndex >= 0) {
-      activeExamIndex.value = savedIndex
-    }
+    await syncSavedReportState(saved, xrayId)
     alert(`保存成功（报告ID：${saved?.report_id ?? '未知'}）`)
   } catch (err) {
     console.error('保存报告失败：', err)
     alert(err?.message || '保存失败，请检查后端服务与权限')
+  }
+}
+
+async function handleXrayRecordsChanged() {
+  await loadExamList()
+  if (activeExamIndex.value >= examList.value.length) {
+    activeExamIndex.value = examList.value.length > 0 ? 0 : -1
   }
 }
 
