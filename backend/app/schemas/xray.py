@@ -17,6 +17,8 @@ class XrayOut(BaseModel):
     segment_status: int
     update_time: str | None = None
     system_id: int | None = None
+    latest_audit_status: int | None = None
+    latest_revise_content: str | None = None
 
 
 class XrayDetail(BaseModel):

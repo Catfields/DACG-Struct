@@ -5,9 +5,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import select, func as sa_func
 from app.dependencies import get_db
 from app.core.permissions import require_roles, RoleName
 from app.schemas.xray import XrayBatchDeleteRequest, XrayDeleteResult, XrayDetail, XrayOut, XrayPageOut
+from app.models.report_info import ReportInfo
 from app.services import xray_service, log_service, generation_service, translation_service, model_service
 from app.services import segmentation_service
 from app.database import SessionLocal
@@ -54,7 +56,7 @@ def _parse_xray_time(value: str | None, label: str, is_end: bool = False) -> dat
     return parsed
 
 
-def _serialize_xray_out(xray):
+def _serialize_xray_out(xray, audit_status=None, revise_content=None):
     return {
         "xray_id": xray.xray_id,
         "patient_id": xray.patient_id,
@@ -68,6 +70,8 @@ def _serialize_xray_out(xray):
         "segment_status": xray.segment_status,
         "update_time": _format_datetime_value(xray.update_time),
         "system_id": xray.system_id,
+        "latest_audit_status": audit_status,
+        "latest_revise_content": revise_content,
     }
 
 
@@ -419,8 +423,42 @@ async def list_xrays(
         page=page,
         size=size,
     )
+
+    # 批量查询每条 xray 的最新报告审核状态
+    xray_ids = [x.xray_id for x in xrays]
+    audit_map: dict[int, dict] = {}
+    if xray_ids:
+        # 子查询：每个 xray_id 对应的最大 report_id
+        subq = (
+            select(
+                ReportInfo.xray_id,
+                sa_func.max(ReportInfo.report_id).label("max_report_id"),
+            )
+            .where(ReportInfo.xray_id.in_(xray_ids))
+            .group_by(ReportInfo.xray_id)
+            .subquery()
+        )
+        rows = db.execute(
+            select(ReportInfo.xray_id, ReportInfo.audit_status, ReportInfo.revise_content)
+            .join(subq, ReportInfo.report_id == subq.c.max_report_id)
+        ).all()
+        for row in rows:
+            audit_map[row.xray_id] = {
+                "audit_status": row.audit_status,
+                "revise_content": row.revise_content,
+            }
+
+    items = []
+    for xray in xrays:
+        info = audit_map.get(xray.xray_id, {})
+        items.append(_serialize_xray_out(
+            xray,
+            audit_status=info.get("audit_status"),
+            revise_content=info.get("revise_content"),
+        ))
+
     return {
-        "items": [_serialize_xray_out(xray) for xray in xrays],
+        "items": items,
         "total": total,
         "page": page,
         "size": size,

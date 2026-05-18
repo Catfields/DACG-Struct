@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 # 数据路径配置
-DATA_ROOT = "/home/y530/handsome/DACG/data/SCR"
+DATA_ROOT = "/data/home/zyx/Ir-UNet/DACG/DACG-Struct/data/SCR"
 IMAGE_DIR = os.path.join(DATA_ROOT, "images/images")
 MASK_DIR = os.path.join(DATA_ROOT, "masks/masks")
 POINTS_DIR = os.path.join(DATA_ROOT, "points/points")

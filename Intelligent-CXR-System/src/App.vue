@@ -357,6 +357,8 @@ function mapXrayToExamItem(xray) {
     age: xray?.patient_age ?? '',
     time: formatUploadTime(xray?.upload_time),
     examNo: `CXR000${xrayId}`,
+    auditStatus: xray?.latest_audit_status ?? null,
+    reviseContent: xray?.latest_revise_content || '',
   }
 }
 

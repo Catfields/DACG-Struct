@@ -162,6 +162,18 @@ export async function fetchReportHistory(reportId) {
   return requestJson(`/reports/${reportId}/history`)
 }
 
+export async function auditReport(reportId, auditStatus, reviseContent = null) {
+  const body = { audit_status: auditStatus }
+  if (reviseContent) {
+    body.revise_content = reviseContent
+  }
+  return requestJson(`/reports/${reportId}/audit`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 export async function fetchXrayVisualizationBlob(xrayId) {
   return requestBlob(`/xray/${xrayId}/visualization`)
 }

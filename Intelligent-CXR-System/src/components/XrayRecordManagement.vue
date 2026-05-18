@@ -268,6 +268,28 @@
                 </span>
               </div>
 
+              <div v-if="activeReport.audit_status === 0 && canAuditReport()" class="audit-actions">
+                <button
+                  class="toolbar-btn mini approve-btn"
+                  :disabled="auditSubmitting"
+                  @click="onApproveReport"
+                >
+                  {{ auditSubmitting ? '处理中...' : '✓ 通过' }}
+                </button>
+                <button
+                  class="toolbar-btn mini reject-btn"
+                  :disabled="auditSubmitting"
+                  @click="onOpenRejectDialog"
+                >
+                  ✗ 驳回
+                </button>
+              </div>
+
+              <div v-if="activeReport.audit_status === 2 && activeReport.revise_content" class="reject-reason-display">
+                <span class="reject-reason-label">驳回理由：</span>
+                <span class="reject-reason-text">{{ activeReport.revise_content }}</span>
+              </div>
+
               <div class="report-meta">
                 <div>
                   <span>报告ID</span>
@@ -343,12 +365,35 @@
         </div>
       </aside>
     </main>
+
+    <!-- 驳回理由弹窗 -->
+    <div v-if="rejectDialogVisible" class="modal-mask">
+      <div class="modal-dialog">
+        <div class="modal-title">驳回报告</div>
+        <div class="modal-body">
+          <label class="modal-label">驳回理由（可选）：</label>
+          <textarea
+            v-model="rejectReason"
+            class="modal-textarea"
+            placeholder="请输入驳回理由，将提示影像科医生订正报告..."
+            rows="4"
+          ></textarea>
+        </div>
+        <div class="modal-actions">
+          <button class="toolbar-btn secondary" :disabled="auditSubmitting" @click="onCancelReject">取消</button>
+          <button class="toolbar-btn danger" :disabled="auditSubmitting" @click="onConfirmReject">
+            {{ auditSubmitting ? '提交中...' : '确认驳回' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
+  auditReport,
   batchDeleteXrays,
   deleteXray,
   fetchReportHistory,
@@ -359,7 +404,7 @@ import {
   fetchXrayOriginalBlob,
 } from '../api/cxr'
 
-defineProps({
+const props = defineProps({
   currentUser: {
     type: Object,
     required: true,
@@ -389,6 +434,9 @@ const originalError = ref('')
 const maskError = ref('')
 const reportError = ref('')
 const historyError = ref('')
+const auditSubmitting = ref(false)
+const rejectDialogVisible = ref(false)
+const rejectReason = ref('')
 
 const searchForm = ref({
   patientId: '',
@@ -665,6 +713,87 @@ async function onBatchDelete() {
   } finally {
     submitting.value = false
   }
+}
+
+async function onApproveReport() {
+  const report = activeReport.value
+  if (!report) return
+  if (!window.confirm('确认审核通过该报告？')) return
+  auditSubmitting.value = true
+  try {
+    await auditReport(report.report_id, 1)
+    window.alert('审核通过')
+    // 刷新报告数据
+    if (activeDetail.value?.xray?.xray_id) {
+      await refreshReportData(activeDetail.value.xray.xray_id)
+    }
+    emit('records-changed')
+  } catch (err) {
+    window.alert(err?.message || '审核操作失败')
+  } finally {
+    auditSubmitting.value = false
+  }
+}
+
+function onOpenRejectDialog() {
+  rejectReason.value = ''
+  rejectDialogVisible.value = true
+}
+
+function onCancelReject() {
+  rejectDialogVisible.value = false
+  rejectReason.value = ''
+}
+
+async function onConfirmReject() {
+  const report = activeReport.value
+  if (!report) return
+  auditSubmitting.value = true
+  try {
+    await auditReport(report.report_id, 2, rejectReason.value || undefined)
+    rejectDialogVisible.value = false
+    window.alert('已驳回')
+    if (activeDetail.value?.xray?.xray_id) {
+      await refreshReportData(activeDetail.value.xray.xray_id)
+    }
+    emit('records-changed')
+  } catch (err) {
+    window.alert(err?.message || '驳回操作失败')
+  } finally {
+    auditSubmitting.value = false
+  }
+}
+
+async function refreshReportData(xrayId) {
+  try {
+    const reports = await fetchReportsByXrayId(xrayId)
+    const normalizedReports = normalizeReportPayload(reports)
+    detailReports.value = normalizedReports
+    const latestReport = normalizedReports[0]
+    if (latestReport?.report_id) {
+      try {
+        reportHistory.value = await fetchReportHistory(latestReport.report_id)
+      } catch {
+        reportHistory.value = []
+      }
+    }
+  } catch {
+    // ignore
+  }
+  // 同步刷新列表中该条记录的审核状态
+  const idx = records.value.findIndex((r) => r.xray_id === xrayId)
+  if (idx >= 0) {
+    const report0 = detailReports.value[0]
+    if (report0) {
+      records.value[idx].latest_audit_status = report0.audit_status
+      records.value[idx].latest_revise_content = report0.revise_content
+    }
+  }
+}
+
+function canAuditReport() {
+  const role = props.currentUser?.role || ''
+  return role === 'radiologist' || role === 'admin'
 }
 
 function formatTime(raw) {
@@ -1309,6 +1438,107 @@ onUnmounted(() => {
 .audit-badge.danger {
   color: #b91c1c;
   background: #fee2e2;
+}
+.audit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f0fdf4;
+}
+.approve-btn {
+  border-color: #16a34a;
+  background: #dcfce7;
+  color: #166534;
+}
+.approve-btn:hover:not(:disabled) {
+  background: #bbf7d0;
+}
+.reject-btn {
+  border-color: #dc2626;
+  background: #fee2e2;
+  color: #991b1b;
+}
+.reject-btn:hover:not(:disabled) {
+  background: #fecaca;
+}
+.reject-reason-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fef2f2;
+  font-size: 12px;
+}
+.reject-reason-label {
+  flex-shrink: 0;
+  color: #991b1b;
+  font-weight: 600;
+}
+.reject-reason-text {
+  color: #b91c1c;
+  word-break: break-word;
+}
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-dialog {
+  width: 420px;
+  max-width: 90vw;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+.modal-title {
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+.modal-body {
+  padding: 16px 20px;
+}
+.modal-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #475569;
+  font-weight: 600;
+}
+.modal-textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 13px;
+  resize: vertical;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.modal-textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
 }
 .report-meta {
   padding: 10px;

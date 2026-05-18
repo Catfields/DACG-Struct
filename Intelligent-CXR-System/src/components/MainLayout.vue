@@ -95,6 +95,7 @@
           <table class="list-table">
             <thead>
               <tr>
+                <th class="status-col">状态</th>
                 <th>姓名</th>
                 <th>性别</th>
                 <th>年龄</th>
@@ -106,9 +107,28 @@
               <tr
                 v-for="item in filteredExamList"
                 :key="item.index"
-                :class="{ active: item.index === activeExamIndex }"
+                :class="{
+                  active: item.index === activeExamIndex,
+                  'row-rejected': item.exam.auditStatus === 2,
+                }"
                 @click="onSelectExamRow(item.index)"
               >
+                <td class="status-col">
+                  <span
+                    v-if="item.exam.auditStatus === 2"
+                    class="reject-icon"
+                    :title="item.exam.reviseContent ? `驳回理由：${item.exam.reviseContent}` : '报告已被驳回，请订正'"
+                  >
+                    ❗
+                  </span>
+                  <span
+                    v-else-if="item.exam.auditStatus === 1"
+                    class="approve-icon"
+                    title="审核通过"
+                  >
+                    ✓
+                  </span>
+                </td>
                 <td>{{ item.exam.name }}</td>
                 <td>{{ item.exam.gender }}</td>
                 <td>{{ item.exam.age }}</td>
@@ -116,7 +136,7 @@
                 <td>{{ item.exam.examNo }}</td>
               </tr>
               <tr v-if="filteredExamList.length === 0">
-                <td class="empty-row" colspan="5">
+                <td class="empty-row" colspan="6">
                   {{ props.examListError || '未找到匹配的检查记录' }}
                 </td>
               </tr>
@@ -1721,6 +1741,43 @@ onUnmounted(() => {
 .empty-row {
   text-align: center;
   color: #64748b;
+}
+.status-col {
+  width: 40px;
+  text-align: center !important;
+}
+.reject-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  color: #dc2626;
+  animation: pulse-shake 1.5s ease-in-out infinite;
+  cursor: help;
+}
+.approve-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  font-size: 14px;
+  color: #16a34a;
+  font-weight: 700;
+}
+@keyframes pulse-shake {
+  0%, 100% { transform: scale(1); }
+  25% { transform: scale(1.15) rotate(-5deg); }
+  50% { transform: scale(1.1) rotate(5deg); }
+  75% { transform: scale(1.15) rotate(-3deg); }
+}
+.row-rejected {
+  background: #fef2f2 !important;
+}
+.row-rejected:hover {
+  background: #fee2e2 !important;
 }
 
 /* 中间：图像区域 */
