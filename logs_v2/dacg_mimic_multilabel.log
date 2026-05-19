@@ -1,0 +1,57 @@
+2026-05-02 10:09:42,996 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_multilabel.log
+2026-05-02 10:09:42,996 - __main__ - INFO - 日志级别: INFO
+2026-05-02 10:09:43,651 - __main__ - INFO - 启动单任务多标签训练流程
+2026-05-02 10:09:43,651 - __main__ - INFO - 使用配置文件: config/multilabel_config.yaml
+2026-05-02 10:09:44,363 - __main__ - INFO - 多标签类别数: 11
+2026-05-02 10:09:44,363 - __main__ - INFO - 标签顺序: ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Enlarged Cardiomediastinum', 'Lung Lesion', 'Lung Opacity', 'Normal', 'Pleural Effusion', 'Pneumonia', 'Pneumothorax']
+2026-05-02 10:09:45,836 - __main__ - INFO - 开始训练...
+2026-05-02 10:09:45,837 - __main__ - INFO - 实验名称: dacg_mimic_multilabel
+2026-05-02 10:09:45,837 - __main__ - INFO - 训练轮数: 100
+2026-05-02 10:09:45,837 - __main__ - INFO - 批次大小: 32
+2026-05-02 10:09:45,837 - __main__ - INFO - 学习率: 1e-4
+2026-05-02 10:16:04,831 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_multilabel.log
+2026-05-02 10:16:04,832 - __main__ - INFO - 日志级别: INFO
+2026-05-02 10:16:05,463 - __main__ - INFO - 启动单任务多标签训练流程
+2026-05-02 10:16:05,464 - __main__ - INFO - 使用配置文件: config/multilabel_config.yaml
+2026-05-02 10:16:06,145 - __main__ - INFO - 多标签类别数: 11
+2026-05-02 10:16:06,146 - __main__ - INFO - 标签顺序: ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Enlarged Cardiomediastinum', 'Lung Lesion', 'Lung Opacity', 'Normal', 'Pleural Effusion', 'Pneumonia', 'Pneumothorax']
+2026-05-02 10:16:07,525 - __main__ - INFO - 开始训练...
+2026-05-02 10:16:07,525 - __main__ - INFO - 实验名称: dacg_mimic_multilabel
+2026-05-02 10:16:07,525 - __main__ - INFO - 训练轮数: 100
+2026-05-02 10:16:07,525 - __main__ - INFO - 批次大小: 32
+2026-05-02 10:16:07,525 - __main__ - INFO - 学习率: 1e-4
+2026-05-02 10:23:04,070 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_multilabel.log
+2026-05-02 10:23:04,070 - __main__ - INFO - 日志级别: INFO
+2026-05-02 10:23:04,679 - __main__ - INFO - 启动单任务多标签训练流程
+2026-05-02 10:23:04,679 - __main__ - INFO - 使用配置文件: config/multilabel_config.yaml
+2026-05-02 10:23:05,378 - __main__ - INFO - 多标签类别数: 11
+2026-05-02 10:23:05,378 - __main__ - INFO - 标签顺序: ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Enlarged Cardiomediastinum', 'Lung Lesion', 'Lung Opacity', 'Normal', 'Pleural Effusion', 'Pneumonia', 'Pneumothorax']
+2026-05-02 10:23:06,764 - __main__ - INFO - 开始训练...
+2026-05-02 10:23:06,764 - __main__ - INFO - 实验名称: dacg_mimic_multilabel
+2026-05-02 10:23:06,764 - __main__ - INFO - 训练轮数: 100
+2026-05-02 10:23:06,764 - __main__ - INFO - 批次大小: 32
+2026-05-02 10:23:06,764 - __main__ - INFO - 学习率: 1e-4
+2026-05-02 10:24:01,792 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_multilabel.log
+2026-05-02 10:24:01,792 - __main__ - INFO - 日志级别: INFO
+2026-05-02 10:24:02,415 - __main__ - INFO - 启动单任务多标签训练流程
+2026-05-02 10:24:02,416 - __main__ - INFO - 使用配置文件: config/multilabel_config.yaml
+2026-05-02 10:24:03,105 - __main__ - INFO - 多标签类别数: 11
+2026-05-02 10:24:03,105 - __main__ - INFO - 标签顺序: ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Enlarged Cardiomediastinum', 'Lung Lesion', 'Lung Opacity', 'Normal', 'Pleural Effusion', 'Pneumonia', 'Pneumothorax']
+2026-05-02 10:24:04,432 - __main__ - INFO - 开始训练...
+2026-05-02 10:24:04,433 - __main__ - INFO - 实验名称: dacg_mimic_multilabel
+2026-05-02 10:24:04,433 - __main__ - INFO - 训练轮数: 100
+2026-05-02 10:24:04,433 - __main__ - INFO - 批次大小: 32
+2026-05-02 10:24:04,433 - __main__ - INFO - 学习率: 1e-4
+2026-05-02 10:32:55,168 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_multilabel.log
+2026-05-02 10:32:55,168 - __main__ - INFO - 日志级别: INFO
+2026-05-02 10:32:55,788 - __main__ - INFO - 启动单任务多标签训练流程
+2026-05-02 10:32:55,788 - __main__ - INFO - 使用配置文件: config/multilabel_config.yaml
+2026-05-02 10:32:56,475 - __main__ - INFO - 多标签类别数: 11
+2026-05-02 10:32:56,475 - __main__ - INFO - 标签顺序: ['Atelectasis', 'Cardiomegaly', 'Consolidation', 'Edema', 'Enlarged Cardiomediastinum', 'Lung Lesion', 'Lung Opacity', 'Normal', 'Pleural Effusion', 'Pneumonia', 'Pneumothorax']
+2026-05-02 10:32:57,857 - __main__ - INFO - 开始训练...
+2026-05-02 10:32:57,857 - __main__ - INFO - 实验名称: dacg_mimic_multilabel
+2026-05-02 10:32:57,857 - __main__ - INFO - 训练轮数: 100
+2026-05-02 10:32:57,857 - __main__ - INFO - 批次大小: 32
+2026-05-02 10:32:57,857 - __main__ - INFO - 学习率: 1e-4
+2026-05-02 13:44:30,901 - __main__ - INFO - 测试结果: {'loss': 0.25772466575321945, 'acc': 0.14151827991008759, 'balanced_acc': 0.5, 'precision': 0.14151827991008759, 'recall': 1.0, 'specificity': 0.0, 'micro_f1': 0.24794746935367584, 'macro_f1': 0.2350173145532608, 'element_acc': 0.14151827991008759, 'exact_match': 0.0, 'pred_pos_rate': 1.0, 'true_pos_rate': 0.14151827991008759}
+2026-05-02 13:44:30,901 - __main__ - INFO - 多标签训练完成!

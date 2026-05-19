@@ -1,0 +1,13 @@
+2026-05-03 20:09:32,633 - __main__ - INFO - 日志文件: ./logs/dacg_experiment.log
+2026-05-03 20:09:32,633 - __main__ - INFO - 日志级别: INFO
+2026-05-03 20:09:32,633 - __main__ - INFO - 加载疾病元数据...
+2026-05-03 20:09:32,634 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-05-03 20:09:32,634 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-05-03 20:09:32,634 - __main__ - INFO -   atelectasis: 35
+2026-05-03 20:09:32,634 - __main__ - INFO -   calcification: 25
+2026-05-03 20:09:32,634 - __main__ - INFO -   cardiomegaly: 20
+2026-05-03 20:09:32,634 - __main__ - INFO -   consolidation: 35
+2026-05-03 20:09:32,634 - __main__ - INFO -   edema: 25
+2026-05-03 20:09:32,634 - __main__ - INFO -   ...
+2026-05-03 20:09:32,634 - __main__ - INFO - 创建数据加载器...
+2026-05-03 20:09:32,634 - __main__ - INFO - 使用配置文件: config/中

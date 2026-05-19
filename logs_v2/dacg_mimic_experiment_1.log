@@ -1,0 +1,144 @@
+2026-04-07 20:36:11,033 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-07 20:36:11,034 - __main__ - INFO - 日志级别: INFO
+2026-04-07 20:36:11,034 - __main__ - INFO - 加载疾病元数据...
+2026-04-07 20:36:11,034 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-07 20:36:11,034 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-07 20:36:11,034 - __main__ - INFO -   atelectasis: 35
+2026-04-07 20:36:11,034 - __main__ - INFO -   calcification: 25
+2026-04-07 20:36:11,034 - __main__ - INFO -   cardiomegaly: 20
+2026-04-07 20:36:11,034 - __main__ - INFO -   consolidation: 35
+2026-04-07 20:36:11,034 - __main__ - INFO -   edema: 25
+2026-04-07 20:36:11,034 - __main__ - INFO -   ...
+2026-04-07 20:36:11,034 - __main__ - INFO - 创建数据加载器...
+2026-04-07 20:36:11,034 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-07 20:36:20,830 - __main__ - INFO - 创建模型...
+2026-04-07 20:36:21,670 - __main__ - INFO - 创建训练器...
+2026-04-07 20:36:22,412 - __main__ - INFO - 开始训练...
+2026-04-07 20:36:22,412 - __main__ - INFO - 实验名称: dacg_mimic_experiment
+2026-04-07 20:36:22,412 - __main__ - INFO - 训练轮数: 100
+2026-04-07 20:36:22,412 - __main__ - INFO - 批次大小: 32
+2026-04-07 20:36:22,412 - __main__ - INFO - 学习率: 1e-4
+2026-04-07 20:36:22,412 - __main__ - INFO - S-Score启用: False
+2026-04-07 20:37:19,141 - __main__ - INFO - 训练被用户中断
+2026-04-07 20:37:19,149 - __main__ - INFO - 测试模型...
+2026-04-07 20:38:11,745 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-07 20:38:11,746 - __main__ - INFO - 日志级别: INFO
+2026-04-07 20:38:11,746 - __main__ - INFO - 加载疾病元数据...
+2026-04-07 20:38:11,746 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-07 20:38:11,746 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-07 20:38:11,746 - __main__ - INFO -   atelectasis: 35
+2026-04-07 20:38:11,746 - __main__ - INFO -   calcification: 25
+2026-04-07 20:38:11,746 - __main__ - INFO -   cardiomegaly: 20
+2026-04-07 20:38:11,746 - __main__ - INFO -   consolidation: 35
+2026-04-07 20:38:11,746 - __main__ - INFO -   edema: 25
+2026-04-07 20:38:11,746 - __main__ - INFO -   ...
+2026-04-07 20:38:11,746 - __main__ - INFO - 创建数据加载器...
+2026-04-07 20:38:11,746 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-07 20:38:21,517 - __main__ - INFO - 创建模型...
+2026-04-07 20:38:22,333 - __main__ - INFO - 创建训练器...
+2026-04-07 20:38:22,849 - __main__ - INFO - 开始训练...
+2026-04-07 20:38:22,849 - __main__ - INFO - 实验名称: dacg_mimic_experiment
+2026-04-07 20:38:22,849 - __main__ - INFO - 训练轮数: 100
+2026-04-07 20:38:22,849 - __main__ - INFO - 批次大小: 32
+2026-04-07 20:38:22,849 - __main__ - INFO - 学习率: 1e-4
+2026-04-07 20:38:22,849 - __main__ - INFO - S-Score启用: False
+2026-04-07 22:31:22,550 - __main__ - INFO - 测试模型...
+2026-04-07 22:32:38,929 - __main__ - INFO - 测试结果: {'total_loss': 6.570537394023987, 'mention_loss': 0.056018903821825505, 'polarity_loss': 0.6931471834144745, 'probability_loss': 1.0767476178735376, 'severity_loss': 0.0, 'modifier_loss': 1.5773772713672591, 'anatomy_loss': 3.1672464271940557}
+2026-04-07 22:32:38,929 - __main__ - INFO - 训练完成!
+2026-04-08 20:51:32,668 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-08 20:51:32,668 - __main__ - INFO - 日志级别: INFO
+2026-04-08 20:51:32,668 - __main__ - INFO - 加载疾病元数据...
+2026-04-08 20:51:32,668 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-08 20:51:32,669 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-08 20:51:32,669 - __main__ - INFO -   atelectasis: 35
+2026-04-08 20:51:32,669 - __main__ - INFO -   calcification: 25
+2026-04-08 20:51:32,669 - __main__ - INFO -   cardiomegaly: 20
+2026-04-08 20:51:32,669 - __main__ - INFO -   consolidation: 35
+2026-04-08 20:51:32,669 - __main__ - INFO -   edema: 25
+2026-04-08 20:51:32,669 - __main__ - INFO -   ...
+2026-04-08 20:51:32,669 - __main__ - INFO - 创建数据加载器...
+2026-04-08 20:51:32,669 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-08 20:51:41,452 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-08 20:51:41,452 - __main__ - INFO - 日志级别: INFO
+2026-04-08 20:51:41,452 - __main__ - INFO - 加载疾病元数据...
+2026-04-08 20:51:41,452 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-08 20:51:41,452 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-08 20:51:41,452 - __main__ - INFO -   atelectasis: 35
+2026-04-08 20:51:41,452 - __main__ - INFO -   calcification: 25
+2026-04-08 20:51:41,452 - __main__ - INFO -   cardiomegaly: 20
+2026-04-08 20:51:41,452 - __main__ - INFO -   consolidation: 35
+2026-04-08 20:51:41,452 - __main__ - INFO -   edema: 25
+2026-04-08 20:51:41,452 - __main__ - INFO -   ...
+2026-04-08 20:51:41,452 - __main__ - INFO - 创建数据加载器...
+2026-04-08 20:51:41,453 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-08 20:51:50,447 - __main__ - INFO - 创建模型...
+2026-04-08 20:51:51,228 - __main__ - INFO - 创建训练器...
+2026-04-08 20:51:51,723 - __main__ - INFO - 开始训练...
+2026-04-08 20:51:51,723 - __main__ - INFO - 实验名称: dacg_mimic_experiment
+2026-04-08 20:51:51,723 - __main__ - INFO - 训练轮数: 100
+2026-04-08 20:51:51,723 - __main__ - INFO - 批次大小: 32
+2026-04-08 20:51:51,723 - __main__ - INFO - 学习率: 1e-4
+2026-04-08 20:51:51,723 - __main__ - INFO - S-Score启用: True
+2026-04-08 22:35:55,333 - __main__ - INFO - 测试模型...
+2026-04-08 22:37:01,645 - __main__ - INFO - 测试结果: {'total_loss': 6.570537394023987, 'mention_loss': 0.056018903821825505, 'polarity_loss': 0.6931471834144745, 'probability_loss': 1.0767476178735376, 'severity_loss': 0.0, 'modifier_loss': 1.5773772713672591, 'anatomy_loss': 3.1672464271940557}
+2026-04-08 22:37:01,646 - __main__ - INFO - 训练完成!
+2026-04-16 21:10:00,221 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-16 21:10:00,221 - __main__ - INFO - 日志级别: INFO
+2026-04-16 21:10:00,221 - __main__ - INFO - 加载疾病元数据...
+2026-04-16 21:10:00,221 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-16 21:10:00,222 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-16 21:10:00,222 - __main__ - INFO -   atelectasis: 35
+2026-04-16 21:10:00,222 - __main__ - INFO -   calcification: 25
+2026-04-16 21:10:00,222 - __main__ - INFO -   cardiomegaly: 20
+2026-04-16 21:10:00,222 - __main__ - INFO -   consolidation: 35
+2026-04-16 21:10:00,222 - __main__ - INFO -   edema: 25
+2026-04-16 21:10:00,222 - __main__ - INFO -   ...
+2026-04-16 21:10:00,222 - __main__ - INFO - 创建数据加载器...
+2026-04-16 21:10:00,222 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-16 21:10:09,315 - __main__ - INFO - 创建模型...
+2026-04-16 21:10:10,079 - __main__ - INFO - 创建训练器...
+2026-04-16 21:10:10,580 - __main__ - INFO - 开始训练...
+2026-04-16 21:10:10,580 - __main__ - INFO - 实验名称: dacg_mimic_experiment
+2026-04-16 21:10:10,580 - __main__ - INFO - 训练轮数: 100
+2026-04-16 21:10:10,580 - __main__ - INFO - 批次大小: 32
+2026-04-16 21:10:10,580 - __main__ - INFO - 学习率: 1e-4
+2026-04-16 21:10:10,580 - __main__ - INFO - S-Score启用: True
+2026-04-16 22:56:29,273 - __main__ - INFO - 测试模型...
+2026-04-16 22:57:43,214 - __main__ - INFO - 测试结果: {'total_loss': 7.929632217048174, 'mention_loss': 0.056018903821825505, 'polarity_loss': 0.6931471834144745, 'probability_loss': 1.0767476178735376, 'severity_loss': 1.3590947902535062, 'modifier_loss': 1.5773772713672591, 'anatomy_loss': 3.1672464271940557}
+2026-04-16 22:57:43,214 - __main__ - INFO - 训练完成!
+2026-04-18 19:14:03,280 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-18 19:14:03,280 - __main__ - INFO - 日志级别: INFO
+2026-04-18 19:14:03,280 - __main__ - INFO - 加载疾病元数据...
+2026-04-18 19:14:03,280 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-18 19:14:03,280 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-18 19:14:03,280 - __main__ - INFO -   atelectasis: 35
+2026-04-18 19:14:03,280 - __main__ - INFO -   calcification: 25
+2026-04-18 19:14:03,280 - __main__ - INFO -   cardiomegaly: 20
+2026-04-18 19:14:03,280 - __main__ - INFO -   consolidation: 35
+2026-04-18 19:14:03,280 - __main__ - INFO -   edema: 25
+2026-04-18 19:14:03,281 - __main__ - INFO -   ...
+2026-04-18 19:14:03,281 - __main__ - INFO - 创建数据加载器...
+2026-04-18 19:14:03,281 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-18 19:14:11,767 - __main__ - INFO - 日志文件: ./logs/dacg_mimic_experiment.log
+2026-04-18 19:14:11,767 - __main__ - INFO - 日志级别: INFO
+2026-04-18 19:14:11,767 - __main__ - INFO - 加载疾病元数据...
+2026-04-18 19:14:11,768 - __main__ - INFO - 疾病顺序: ['atelectasis', 'calcification', 'cardiomegaly', 'consolidation', 'edema', 'emphysema', 'fracture', 'granuloma', 'hernia', 'lung_lesion', 'lung_opacity', 'pleural_effusion', 'pleural_thickening', 'pneumonia', 'pneumothorax', 'tortuosity_of_the_thoracic_aorta']
+2026-04-18 19:14:11,768 - __main__ - INFO - 构建了 16 个疾病的 vocab_sizes
+2026-04-18 19:14:11,768 - __main__ - INFO -   atelectasis: 35
+2026-04-18 19:14:11,768 - __main__ - INFO -   calcification: 25
+2026-04-18 19:14:11,768 - __main__ - INFO -   cardiomegaly: 20
+2026-04-18 19:14:11,768 - __main__ - INFO -   consolidation: 35
+2026-04-18 19:14:11,768 - __main__ - INFO -   edema: 25
+2026-04-18 19:14:11,768 - __main__ - INFO -   ...
+2026-04-18 19:14:11,768 - __main__ - INFO - 创建数据加载器...
+2026-04-18 19:14:11,768 - __main__ - INFO - 使用配置文件: config/structured_config.yaml
+2026-04-18 19:14:20,790 - __main__ - INFO - 创建模型...
+2026-04-18 19:14:21,594 - __main__ - INFO - 创建训练器...
+2026-04-18 19:14:22,140 - __main__ - INFO - 开始训练...
+2026-04-18 19:14:22,141 - __main__ - INFO - 实验名称: dacg_mimic_experiment
+2026-04-18 19:14:22,141 - __main__ - INFO - 训练轮数: 100
+2026-04-18 19:14:22,141 - __main__ - INFO - 批次大小: 32
+2026-04-18 19:14:22,141 - __main__ - INFO - 学习率: 1e-4
+2026-04-18 19:14:22,141 - __main__ - INFO - S-Score启用: True
+2026-04-18 19:14:32,806 - __main__ - INFO - 训练被用户中断
+2026-04-18 19:14:32,809 - __main__ - INFO - 测试模型...
