@@ -161,7 +161,7 @@
         >
           <input
             type="file"
-            accept="image/*"
+            accept="image/*,.dcm"
             class="file-input"
             :disabled="!canEdit"
             @change="onFileChange"
@@ -173,7 +173,7 @@
                 : '当前角色仅支持查看，不能上传胸片'
             }}
           </p>
-          <p class="upload-sub" v-if="canEdit">支持 JPG / PNG / JPEG 等格式</p>
+          <p class="upload-sub" v-if="canEdit">支持 JPG / PNG / JPEG / DICOM (.dcm) 等格式</p>
         </div>
 
         <!-- 预览区域 -->

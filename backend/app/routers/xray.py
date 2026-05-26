@@ -214,7 +214,8 @@ async def upload_xray(
     db: Session = Depends(get_db),
     current_user=Depends(require_roles(RoleName.RADIOLOGIST, RoleName.ADMIN)),
 ):
-    from app.utils.file_storage import save_upload
+    from app.utils.file_storage import save_upload, convert_dicom_to_png
+    from pathlib import Path
 
     class _Form:
         def __init__(self):
@@ -224,8 +225,21 @@ async def upload_xray(
             self.patient_age = patient_age
             self.xray_format = xray_format
 
+    form_data = _Form()
     path = save_upload(file, patient_id)
-    xray = xray_service.create_record(db, _Form(), path, current_user.user_id)
+    
+    # Convert DICOM to PNG if needed
+    if xray_format.upper() == 'DICOM' or Path(file.filename or '').suffix.lower() == '.dcm':
+        try:
+            png_path = path.rsplit('.', 1)[0] + '.png'
+            convert_dicom_to_png(path, png_path)
+            path = png_path
+            form_data.xray_format = 'PNG'
+        except Exception as e:
+            logger.error(f"DICOM conversion failed for {file.filename}: {e}")
+            raise AppException("DICOM_CONVERSION_FAILED", f"DICOM转换失败: {str(e)}", status_code=400)
+    
+    xray = xray_service.create_record(db, form_data, path, current_user.user_id)
 
     await log_service.write(
         db=db,

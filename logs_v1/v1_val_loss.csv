@@ -1,4 +1,4 @@
-step,bs32-lr1e-04-ep50-val/loss_step,bs32-lr1e-04-ep50-val/loss_timestamp
+epoch,val_loss,bs32-lr1e-04-ep50-val/loss_timestamp
 0,2.4,1765028842374
 1,2.365639,1765029358680
 2,2.356651,1765029868171

@@ -6,9 +6,15 @@ import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.font_manager as fm
 
-# Set font for English
-plt.rcParams['font.family'] = 'DejaVu Sans'
+# 设置思源宋体确保中文正常显示
+font_path = '/data/home/zyx/.local/share/fonts/SourceHanSerif/SourceHanSerifCN-Regular.ttf'
+zh_font = fm.FontProperties(fname=font_path)
+
+# Set font for Chinese
+plt.rcParams['font.family'] = zh_font.get_name()
+plt.rcParams['axes.unicode_minus'] = False
 
 # Define model configurations
 MODELS = [
@@ -57,24 +63,25 @@ def plot_loss_comparison(models_data, save_path):
         val_losses = data[model['val_loss_key']]
         epochs = range(1, len(train_losses) + 1)
         
-        # Plot training loss
+        # Plot training loss - 图例改为中文
         ax.plot(epochs, train_losses, 
                 color=model['color'], 
                 linestyle='-', 
                 linewidth=2,
                 alpha=0.7,
-                label=f'{model["name"]} (train)')
+                label=f'{model["name"]} (训练)')
         
         # Plot validation loss
         ax.plot(epochs, val_losses, 
                 color=model['color'], 
                 linestyle='--', 
                 linewidth=2,
-                label=f'{model["name"]} (val)')
+                label=f'{model["name"]} (验证)')
     
-    ax.set_xlabel('Epoch', fontsize=12)
-    ax.set_ylabel('Loss', fontsize=12)
-    ax.set_title('Training and Validation Loss Comparison', fontsize=14, fontweight='bold')
+    # 标签和标题改为中文，去掉加粗
+    ax.set_xlabel('训练轮次', fontsize=12)
+    ax.set_ylabel('损失值', fontsize=12)
+    ax.set_title('训练与验证损失值对比', fontsize=14, fontweight='normal')
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
     
@@ -93,24 +100,25 @@ def plot_dice_comparison(models_data, save_path):
         val_dices = data[model['val_dice_key']]
         epochs = range(1, len(train_dices) + 1)
         
-        # Plot training Dice
+        # Plot training Dice - 图例改为中文
         ax.plot(epochs, train_dices, 
                 color=model['color'], 
                 linestyle='-', 
                 linewidth=2,
                 alpha=0.7,
-                label=f'{model["name"]} (train)')
+                label=f'{model["name"]} (训练)')
         
         # Plot validation Dice
         ax.plot(epochs, val_dices, 
                 color=model['color'], 
                 linestyle='--', 
                 linewidth=2,
-                label=f'{model["name"]} (val)')
+                label=f'{model["name"]} (验证)')
     
-    ax.set_xlabel('Epoch', fontsize=12)
-    ax.set_ylabel('Dice Coefficient', fontsize=12)
-    ax.set_title('Training and Validation Dice Coefficient Comparison', fontsize=14, fontweight='bold')
+    # 标签和标题改为中文，去掉加粗
+    ax.set_xlabel('训练轮次', fontsize=12)
+    ax.set_ylabel('Dice系数', fontsize=12)
+    ax.set_title('训练与验证Dice系数对比', fontsize=14, fontweight='normal')
     ax.legend(loc='best', fontsize=10)
     ax.grid(True, alpha=0.3)
     

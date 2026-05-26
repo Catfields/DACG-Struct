@@ -1068,6 +1068,7 @@ function inferXrayFormat(file) {
 
   const name = String(file.name || '')
   const ext = name.includes('.') ? name.split('.').pop().toUpperCase() : ''
+  if (ext === 'DCM') return 'DICOM'
   return ext || 'PNG'
 }
 

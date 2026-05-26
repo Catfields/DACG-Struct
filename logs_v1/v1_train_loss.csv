@@ -1,4 +1,4 @@
-step,bs32-lr1e-04-ep50-train/total_loss_step,bs32-lr1e-04-ep50-train/total_loss_timestamp
+epoch,train_loss,bs32-lr1e-04-ep50-train/total_loss_timestamp
 0,1.9172482511352729,1765028842373
 1,1.841475040707367,1765029358679
 2,1.81410385161405,1765029868170
